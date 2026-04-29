@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   createLaneJournal,
@@ -12,6 +14,8 @@ import {
   serializeLaneRunState,
   writeLaneRunState,
 } from "../src/lane/index.js";
+
+const execFileAsync = promisify(execFile);
 
 test("serializes lane journal and durable state without starting execution", () => {
   const journal = createLaneJournal({
@@ -161,6 +165,32 @@ test("rejects lane run state access through symlinked storage paths", async () =
     await rm(outsideRoot, { recursive: true, force: true });
   }
 });
+
+test(
+  "rejects non-regular lane run state files",
+  { skip: process.platform === "win32" ? "mkfifo is not available on Windows." : false },
+  async () => {
+    const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+    try {
+      const state = createTestLaneRunState("fifo-run");
+      const statePath = resolveLaneRunStatePath(stateRoot, state.id);
+      await mkdir(path.dirname(statePath), { recursive: true });
+      await execFileAsync("mkfifo", [statePath]);
+
+      await assert.rejects(
+        () => readLaneRunState(stateRoot, state.id),
+        /regular file/,
+      );
+      await assert.rejects(
+        () => writeLaneRunState(stateRoot, state),
+        /regular file/,
+      );
+    } finally {
+      await rm(stateRoot, { recursive: true, force: true });
+    }
+  },
+);
 
 test("rejects durable lane run state that does not match the requested run", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));

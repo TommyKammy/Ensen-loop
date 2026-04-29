@@ -1,5 +1,7 @@
 import { constants } from "node:fs";
+import type { Stats } from "node:fs";
 import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import type { LaneAuditRefs } from "../audit/index.js";
@@ -124,17 +126,19 @@ export async function writeLaneRunState(stateRoot: string, state: LaneRunState):
   const validatedState = validateLaneRunStateForWrite(state);
   const statePath = resolveLaneRunStatePath(stateRoot, validatedState.id);
 
-  await assertLaneRunStatePathSafeForWrite(stateRoot, statePath);
+  const realRoot = await assertLaneRunStatePathSafeForWrite(stateRoot, statePath);
   await mkdir(path.dirname(statePath), { recursive: true });
   await assertLaneRunStatePathSafeForWrite(stateRoot, statePath);
 
   const file = await open(
     statePath,
-    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollowFlag(),
+    constants.O_RDWR | constants.O_CREAT | noFollowFlag() | nonBlockingFlag(),
     0o600,
   );
 
   try {
+    await assertOpenedLaneRunStateFileSafeForAccess(realRoot, statePath, file);
+    await file.truncate(0);
     await file.writeFile(`${serializeLaneRunState(validatedState)}\n`, "utf8");
   } finally {
     await file.close();
@@ -145,12 +149,13 @@ export async function writeLaneRunState(stateRoot: string, state: LaneRunState):
 
 export async function readLaneRunState(stateRoot: string, laneRunId: string): Promise<LaneRunState> {
   const statePath = resolveLaneRunStatePath(stateRoot, laneRunId);
-  await assertLaneRunStatePathSafeForRead(stateRoot, statePath);
+  const realRoot = await assertLaneRunStatePathSafeForRead(stateRoot, statePath);
 
-  const file = await open(statePath, constants.O_RDONLY | noFollowFlag());
+  const file = await open(statePath, constants.O_RDONLY | noFollowFlag() | nonBlockingFlag());
   let contents: string;
 
   try {
+    await assertOpenedLaneRunStateFileSafeForAccess(realRoot, statePath, file);
     contents = await file.readFile("utf8");
   } finally {
     await file.close();
@@ -180,20 +185,24 @@ function validateLaneRunStateForWrite(state: LaneRunState): LaneRunState {
   return parsed;
 }
 
-async function assertLaneRunStatePathSafeForWrite(stateRoot: string, statePath: string): Promise<void> {
+async function assertLaneRunStatePathSafeForWrite(stateRoot: string, statePath: string): Promise<string> {
   const realRoot = await resolveCanonicalStateRoot(stateRoot);
   const laneRunsRoot = path.join(path.resolve(stateRoot), "lane-runs");
 
   await assertExistingPathSafe(realRoot, laneRunsRoot, "directory");
   await assertExistingPathSafe(realRoot, statePath, "file");
+
+  return realRoot;
 }
 
-async function assertLaneRunStatePathSafeForRead(stateRoot: string, statePath: string): Promise<void> {
+async function assertLaneRunStatePathSafeForRead(stateRoot: string, statePath: string): Promise<string> {
   const realRoot = await resolveCanonicalStateRoot(stateRoot);
   const laneRunsRoot = path.join(path.resolve(stateRoot), "lane-runs");
 
   await assertExistingPathSafe(realRoot, laneRunsRoot, "directory");
   await assertExistingPathSafe(realRoot, statePath, "file");
+
+  return realRoot;
 }
 
 async function resolveCanonicalStateRoot(stateRoot: string): Promise<string> {
@@ -238,8 +247,8 @@ async function assertExistingPathSafe(
     throw new Error("Lane run state directory path must be a real directory.");
   }
 
-  if (expectedKind === "file" && stats.isDirectory()) {
-    throw new Error("Lane run state file path must not be a directory.");
+  if (expectedKind === "file" && !stats.isFile()) {
+    throw new Error("Lane run state file path must be a regular file.");
   }
 
   const realCandidate = await realpath(candidatePath);
@@ -252,6 +261,40 @@ async function assertExistingPathSafe(
 
 function noFollowFlag(): number {
   return typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+}
+
+function nonBlockingFlag(): number {
+  return typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0;
+}
+
+async function assertOpenedLaneRunStateFileSafeForAccess(
+  realRoot: string,
+  statePath: string,
+  file: FileHandle,
+): Promise<void> {
+  const openedStats = await file.stat();
+
+  if (!openedStats.isFile()) {
+    throw new Error("Lane run state file path must be a regular file.");
+  }
+
+  const pathStats = await lstat(statePath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      throw new Error("Lane run state file changed during access.");
+    }
+
+    throw error;
+  });
+
+  if (!sameFileStats(openedStats, pathStats)) {
+    throw new Error("Lane run state file changed during access.");
+  }
+
+  await assertExistingPathSafe(realRoot, statePath, "file");
+}
+
+function sameFileStats(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
