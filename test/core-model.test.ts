@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import test from "node:test";
 
@@ -50,6 +50,8 @@ test("documents the Ensen-loop core model vocabulary", async () => {
 test("establishes Phase 1 source module boundaries", async () => {
   for (const directory of requiredModuleDirectories) {
     await access(path.resolve(directory));
+    const directoryInfo = await stat(path.resolve(directory));
+    assert.ok(directoryInfo.isDirectory(), `Expected ${directory} to be a directory`);
     assert.ok(MODULE_BOUNDARIES.includes(directory));
   }
 });

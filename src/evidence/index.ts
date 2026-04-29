@@ -1,1 +1,1 @@
-export type { EvidenceBundle, VerificationResult } from "../core/index.js";
+export type { EvidenceBundle, ReviewEvent, VerificationResult } from "../core/index.js";

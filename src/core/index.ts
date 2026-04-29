@@ -75,6 +75,7 @@ export interface DurableState {
 
 export interface EvidenceBundle {
   readonly workItemId: WorkItem["id"];
+  readonly reviewEvents: readonly ReviewEvent[];
   readonly verification: readonly VerificationResult[];
   readonly notes: readonly string[];
 }
