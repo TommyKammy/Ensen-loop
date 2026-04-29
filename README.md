@@ -14,6 +14,7 @@ The Phase 1 local Work Item validation skeleton is documented in [docs/reference
 
 ```sh
 npm ci
+npm run typecheck
 npm run build
 npm test
 node dist/src/cli/index.js dry-run --sample

@@ -18,6 +18,7 @@ Use the repo-owned commands:
 
 ```sh
 npm ci
+npm run typecheck
 npm run build
 npm test
 ```
