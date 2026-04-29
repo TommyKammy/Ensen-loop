@@ -35,6 +35,18 @@ async function readJson(filePath: string): Promise<unknown> {
   return JSON.parse(await readFile(filePath, "utf8")) as unknown;
 }
 
+function assertRecord(value: unknown, label: string): asserts value is Record<string, unknown> {
+  assert.equal(typeof value, "object", `${label} must be an object`);
+  assert.notEqual(value, null, `${label} must not be null`);
+  assert.equal(Array.isArray(value), false, `${label} must not be an array`);
+}
+
+function childRecord(parent: Record<string, unknown>, key: string): Record<string, unknown> {
+  const value = parent[key];
+  assertRecord(value, key);
+  return value;
+}
+
 test("accepts vendored RunRequest v1 valid fixtures", async () => {
   const fixturePaths = await listJsonFixtures("valid");
 
@@ -59,6 +71,95 @@ test("rejects vendored RunRequest v1 invalid fixtures with actionable diagnostic
     assert.ok(
       result.issues.every((issue) => issue.path.length > 0 && issue.message.length > 0),
       `${fixturePath} diagnostics must identify paths and messages`,
+    );
+  }
+});
+
+test("rejects semantically wrong RunRequest id prefixes", async () => {
+  const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
+  const base = await readJson(fixture);
+  assertRecord(base, "fixture");
+
+  const cases: readonly {
+    readonly name: string;
+    readonly mutate: (request: Record<string, unknown>) => void;
+    readonly path: string;
+  }[] = [
+    {
+      name: "request id",
+      mutate: (request) => {
+        request.id = "actor_01HV7Y8M8F2KQ5W3P9R6T4N2AB";
+      },
+      path: "id",
+    },
+    {
+      name: "source id",
+      mutate: (request) => {
+        childRecord(request, "source").sourceId = "repo_01HV7Y8M8F2KQ5W3P9R6T4N2AD";
+      },
+      path: "source.sourceId",
+    },
+    {
+      name: "actor id",
+      mutate: (request) => {
+        childRecord(request, "requestedBy").actorId = "repo_01HV7Y8M8F2KQ5W3P9R6T4N2AE";
+      },
+      path: "requestedBy.actorId",
+    },
+    {
+      name: "work item id",
+      mutate: (request) => {
+        childRecord(request, "workItem").workItemId = "actor_01HV7Y8M8F2KQ5W3P9R6T4N2AF";
+      },
+      path: "workItem.workItemId",
+    },
+    {
+      name: "target id",
+      mutate: (request) => {
+        childRecord(request, "target").targetId = "actor_01HV7Y8M8F2KQ5W3P9R6T4N2AG";
+      },
+      path: "target.targetId",
+    },
+    {
+      name: "policy set id",
+      mutate: (request) => {
+        childRecord(request, "policyContext").policySetId = "repo_01HV7Y8M8F2KQ5W3P9R6T4N2AH";
+      },
+      path: "policyContext.policySetId",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const request = structuredClone(base);
+    assertRecord(request, testCase.name);
+    testCase.mutate(request);
+
+    const result = validateRunRequest(request);
+
+    assert.equal(result.ok, false, `${testCase.name} must be rejected`);
+    assert.ok(
+      result.issues.some((issue) => issue.path === testCase.path),
+      `${testCase.name} must include a ${testCase.path} diagnostic`,
+    );
+  }
+});
+
+test("rejects malformed and non-HTTPS RunRequest work item URLs", async () => {
+  const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
+  const base = await readJson(fixture);
+  assertRecord(base, "fixture");
+
+  for (const url of ["https:///repo", "https://?q=1", "http://example.com", " https://example.com"]) {
+    const request = structuredClone(base);
+    assertRecord(request, "request");
+    childRecord(request, "workItem").url = url;
+
+    const result = validateRunRequest(request);
+
+    assert.equal(result.ok, false, `${url} must be rejected`);
+    assert.ok(
+      result.issues.some((issue) => issue.path === "workItem.url"),
+      `${url} must include a workItem.url diagnostic`,
     );
   }
 });

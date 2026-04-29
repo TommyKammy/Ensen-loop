@@ -106,13 +106,16 @@ const workItemKeys = new Set(["workItemId", "externalId", "title", "url"]);
 const targetKeys = new Set(["targetType", "targetId", "externalRef"]);
 const policyContextKeys = new Set(["policySetId", "riskClasses", "requiresApproval"]);
 
-const prefixedIdPattern =
-  /^(?:actor|artifact|corr|cr|evb|evt|flowstep|policy|pr|repo|req|run|source|sts|workitem)_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const requestIdPattern = /^req_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const sourceIdPattern = /^source_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const actorIdPattern = /^actor_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const workItemIdPattern = /^workitem_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const repositoryIdPattern = /^repo_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const policyIdPattern = /^policy_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const correlationIdPattern = /^corr_[A-Za-z0-9][A-Za-z0-9._~-]{11,127}$/;
 const idempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const sourceTypePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const isoDateTimeUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
-const httpsUrlPattern = /^https:\/\/[^\s]+$/;
 const riskClassPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const extensionKeyPattern = /^x-.+$/;
 
@@ -179,7 +182,7 @@ function collectRunRequestIssues(value: unknown): readonly RunRequestValidationI
   collectUnknownKeyIssues(issues, value, topLevelKeys, "$");
 
   collectConstIssue(issues, "schemaVersion", value.schemaVersion, "eip.run-request.v1");
-  collectPatternIssue(issues, "id", value.id, prefixedIdPattern, "id must be a valid EIP prefixed id.");
+  collectPatternIssue(issues, "id", value.id, requestIdPattern, "id must be a valid EIP request id.");
   collectPatternIssue(
     issues,
     "correlationId",
@@ -239,8 +242,8 @@ function collectSourceIssues(
     issues,
     "source.sourceId",
     value.sourceId,
-    prefixedIdPattern,
-    "sourceId must be a valid EIP prefixed id.",
+    sourceIdPattern,
+    "sourceId must be a valid EIP source id.",
   );
   collectStringLengthPatternIssue(
     issues,
@@ -271,8 +274,8 @@ function collectActorIssues(
     issues,
     "requestedBy.actorId",
     value.actorId,
-    prefixedIdPattern,
-    "actorId must be a valid EIP prefixed id.",
+    actorIdPattern,
+    "actorId must be a valid EIP actor id.",
   );
   collectEnumIssue(
     issues,
@@ -301,22 +304,14 @@ function collectWorkItemIssues(
     issues,
     "workItem.workItemId",
     value.workItemId,
-    prefixedIdPattern,
-    "workItemId must be a valid EIP prefixed id.",
+    workItemIdPattern,
+    "workItemId must be a valid EIP work item id.",
   );
   collectStringLengthIssue(issues, "workItem.externalId", value.externalId, 1, 240);
   collectOptionalStringLengthIssue(issues, "workItem.title", value.title, 1, 240);
 
   if (value.url !== undefined) {
-    collectStringLengthPatternIssue(
-      issues,
-      "workItem.url",
-      value.url,
-      1,
-      400,
-      httpsUrlPattern,
-      "url must be an HTTPS URL.",
-    );
+    collectHttpsUrlIssue(issues, "workItem.url", value.url);
   }
 }
 
@@ -348,8 +343,8 @@ function collectTargetIssues(
     issues,
     "target.targetId",
     value.targetId,
-    prefixedIdPattern,
-    "targetId must be a valid EIP prefixed id.",
+    repositoryIdPattern,
+    "targetId must be a valid EIP repository id.",
   );
   collectOptionalStringLengthIssue(issues, "target.externalRef", value.externalRef, 1, 240);
 }
@@ -377,8 +372,8 @@ function collectPolicyContextIssues(
       issues,
       "policyContext.policySetId",
       value.policySetId,
-      prefixedIdPattern,
-      "policySetId must be a valid EIP prefixed id.",
+      policyIdPattern,
+      "policySetId must be a valid EIP policy id.",
     );
   }
 
@@ -568,6 +563,40 @@ function collectStringLengthPatternIssue(
       path,
       message,
     });
+  }
+}
+
+function collectHttpsUrlIssue(
+  issues: RunRequestValidationIssue[],
+  path: string,
+  value: unknown,
+): void {
+  if (typeof value !== "string" || value.length < 1 || value.length > 400) {
+    issues.push({
+      path,
+      message: "url must be an HTTPS URL.",
+    });
+    return;
+  }
+
+  if (!isHttpsUrl(value)) {
+    issues.push({
+      path,
+      message: "url must be an HTTPS URL.",
+    });
+  }
+}
+
+function isHttpsUrl(value: string): boolean {
+  if (/\s/.test(value) || !value.startsWith("https://") || value.startsWith("https:///")) {
+    return false;
+  }
+
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && url.hostname.length > 0;
+  } catch {
+    return false;
   }
 }
 
