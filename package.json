@@ -1,0 +1,21 @@
+{
+  "name": "ensen-loop",
+  "version": "0.1.0",
+  "description": "Independent development lane engine and successor product to codex-supervisor.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ensen-loop": "./dist/src/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "npm run build && node scripts/run-tests.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.12.12",
+    "typescript": "^5.4.5"
+  }
+}
