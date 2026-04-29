@@ -6,6 +6,8 @@ Ensen-loop is an independent development lane engine and successor product to co
 
 This repository starts as a minimal TypeScript/Node project with a build, smoke test, CI workflow, and repository hygiene rules. The baseline is intentionally small so future work can add the lane engine contracts and runtime behavior behind a stable quality gate.
 
+The Phase 1 module boundaries and vocabulary are defined in [docs/architecture/core-model.md](docs/architecture/core-model.md).
+
 ## Commands
 
 ```sh

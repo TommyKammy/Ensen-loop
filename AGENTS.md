@@ -10,6 +10,8 @@ Do not import implementation code from Ensen-flow or require an Ensen-flow check
 
 This baseline intentionally does not implement EIP RunRequest or RunResult support. Leave that work for the later phase that defines the protocol contracts and enforcement boundary.
 
+The Phase 1 module boundaries and core vocabulary are documented in `docs/architecture/core-model.md`.
+
 ## Local Verification
 
 Use the repo-owned commands:

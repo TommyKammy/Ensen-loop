@@ -15,3 +15,5 @@ export const productIdentity: ProductIdentity = {
 export function describeProduct(): string {
   return `${productIdentity.name} is an independent ${productIdentity.role} and successor product to ${productIdentity.successorTo}.`;
 }
+
+export * from "./core/index.js";
