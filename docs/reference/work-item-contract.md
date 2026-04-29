@@ -9,11 +9,11 @@ The schema is tracked in `schemas/local-work-item.schema.json`.
 | Field | Type | Rule |
 | --- | --- | --- |
 | `id` | string | Stable identifier matching letters, numbers, dots, underscores, or hyphens. |
-| `title` | string | Non-empty operator-facing title. |
-| `source` | string | Non-empty local source label. |
+| `title` | string | Non-empty operator-facing title containing at least one non-whitespace character. |
+| `source` | string | Non-empty local source label containing at least one non-whitespace character. |
 | `status` | string | One of `ready`, `blocked`, `running`, `completed`, or `failed`. |
 
-Malformed inputs fail closed through `validateLocalWorkItem` or `parseLocalWorkItem` with field-specific issues. Unknown fields are rejected until a later contract version explicitly owns them.
+Malformed inputs fail closed through `validateLocalWorkItem` or `parseLocalWorkItem` with field-specific issues. Whitespace-only `title` and `source` values are rejected as blank operator-facing text. Unknown fields are rejected until a later contract version explicitly owns them.
 
 ## Deferred Protocol Boundary
 

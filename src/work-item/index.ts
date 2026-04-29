@@ -105,18 +105,14 @@ function collectLocalWorkItemIssues(value: unknown): readonly WorkItemValidation
     });
   }
 
-  if (!isNonEmptyString(value.title)) {
-    issues.push({
-      path: "title",
-      message: "title is required and must be a non-empty string.",
-    });
+  const titleTextIssue = validateLocalWorkItemTextField("title", value.title);
+  if (titleTextIssue !== undefined) {
+    issues.push(titleTextIssue);
   }
 
-  if (!isNonEmptyString(value.source)) {
-    issues.push({
-      path: "source",
-      message: "source is required and must be a non-empty string.",
-    });
+  const sourceTextIssue = validateLocalWorkItemTextField("source", value.source);
+  if (sourceTextIssue !== undefined) {
+    issues.push(sourceTextIssue);
   }
 
   if (!localWorkItemStatuses.has(value.status)) {
@@ -129,12 +125,29 @@ function collectLocalWorkItemIssues(value: unknown): readonly WorkItemValidation
   return issues;
 }
 
-function isLocalWorkItemId(value: unknown): value is string {
-  return typeof value === "string" && localWorkItemIdPattern.test(value);
+function validateLocalWorkItemTextField(
+  path: "title" | "source",
+  value: unknown,
+): WorkItemValidationIssue | undefined {
+  if (typeof value !== "string" || value.length === 0) {
+    return {
+      path,
+      message: `${path} is required and must be a non-empty string.`,
+    };
+  }
+
+  if (value.trim().length === 0) {
+    return {
+      path,
+      message: `${path} is required and must contain non-whitespace text.`,
+    };
+  }
+
+  return undefined;
 }
 
-function isNonEmptyString(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0;
+function isLocalWorkItemId(value: unknown): value is string {
+  return typeof value === "string" && localWorkItemIdPattern.test(value);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
