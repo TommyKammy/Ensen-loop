@@ -33,6 +33,21 @@ These modules may share the small contracts from `src/core/`, but the core model
 | Evidence Bundle | The reviewable collection of work scope, verification results, review facts, and notes used to justify publication or repair. |
 | Lane Run | One execution attempt for a Work Item through lane states such as queued, running, verifying, reviewing, completed, or failed. |
 
+## Lane Journal and Durable State
+
+Phase 1 represents lane run resumability as a local JSON state file under a caller-provided state root. The concrete schema is documented in `schemas/lane-run.schema.json`.
+
+A Lane Run State record is the durable owner for one lane attempt. It stores the lane run identifier, work item binding, lifecycle status, revision, timestamps, and `startsAgentExecution: false` to make clear that this skeleton does not invoke an agent or start runtime execution.
+
+The Lane Journal is embedded in the Lane Run State for Phase 1. It records short-horizon operator context as typed entries: hypothesis, command, failure, change, and next-action. The journal is resumability context, not an authorization source and not an execution trigger.
+
+Audit and evidence surfaces are represented as explicit reference lists on the Lane Run State:
+
+- `audit.eventRefs` reserves the relationship to future audit events without emitting a full EIP AuditEvent.
+- `evidence.bundleRefs` reserves the relationship to future evidence bundles without emitting a full EvidenceBundleRef.
+
+Local storage helpers must resolve lane run state paths below a real configured state root, reject lane run identifiers containing path separators or traversal syntax, and fail closed when existing storage components are symbolic links. Derived summaries, detail projections, or operator-facing notes must be rebuilt from the Lane Run State instead of redefining the durable status.
+
 ## Provider Posture
 
 GitHub and Codex are future adapter examples, not core model requirements. A future GitHub adapter may bind Work Items to issues and Change Requests to pull requests. A future Codex adapter may satisfy the Agent Provider boundary. Neither adapter is required for this repository to build, test, or explain its Phase 1 model.
