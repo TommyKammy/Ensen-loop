@@ -203,7 +203,7 @@ function isLaneJournalEntry(value: unknown): value is LaneJournalEntry {
     isNonEmptyString(value.id) &&
     isIsoDateTime(value.recordedAt) &&
     ["hypothesis", "command", "failure", "change", "next-action"].includes(String(value.kind)) &&
-    typeof value.message === "string"
+    isNonEmptyString(value.message)
   );
 }
 
@@ -212,7 +212,7 @@ function isAuditRefs(value: unknown): value is LaneAuditRefs {
     isRecord(value) &&
     hasExactKeys(value, ["eventRefs"]) &&
     Array.isArray(value.eventRefs) &&
-    value.eventRefs.every(isString)
+    value.eventRefs.every(isNonEmptyString)
   );
 }
 
@@ -221,7 +221,7 @@ function isEvidenceRefs(value: unknown): value is LaneEvidenceRefs {
     isRecord(value) &&
     hasExactKeys(value, ["bundleRefs"]) &&
     Array.isArray(value.bundleRefs) &&
-    value.bundleRefs.every(isString)
+    value.bundleRefs.every(isNonEmptyString)
   );
 }
 
@@ -285,10 +285,6 @@ function isIsoDateTime(value: unknown): value is string {
   const daysInMonth = new Date(Date.UTC(yearNumber, monthNumber, 0)).getUTCDate();
 
   return dayNumber <= daysInMonth && Number.isFinite(Date.parse(value));
-}
-
-function isString(value: unknown): value is string {
-  return typeof value === "string";
 }
 
 export interface DryRunExecutionPlan {

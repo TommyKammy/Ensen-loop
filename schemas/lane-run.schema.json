@@ -81,7 +81,8 @@
                 "enum": ["hypothesis", "command", "failure", "change", "next-action"]
               },
               "message": {
-                "type": "string"
+                "type": "string",
+                "minLength": 1
               }
             }
           }
@@ -96,7 +97,8 @@
         "eventRefs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         }
       }
@@ -109,7 +111,8 @@
         "bundleRefs": {
           "type": "array",
           "items": {
-            "type": "string"
+            "type": "string",
+            "minLength": 1
           }
         }
       }

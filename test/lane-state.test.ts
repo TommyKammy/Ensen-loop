@@ -185,6 +185,21 @@ test("rejects lane run state payloads that violate the published schema shape", 
       const entries = journal.entries as Record<string, unknown>[];
       entries[0].recordedAt = "2026-02-31T09:00:00.000Z";
     }],
+    ["empty-journal-message", (state) => {
+      const journal = state.journal as Record<string, unknown>;
+      const entries = journal.entries as Record<string, unknown>[];
+      entries[0].message = "";
+    }],
+    ["empty-audit-ref", (state) => {
+      state.audit = {
+        eventRefs: [""],
+      };
+    }],
+    ["empty-evidence-ref", (state) => {
+      state.evidence = {
+        bundleRefs: [""],
+      };
+    }],
     ["extra-top-level-property", (state) => {
       state.extra = true;
     }],
@@ -281,15 +296,15 @@ function createTestLaneRunState(laneRunId: string) {
           id: `entry-${laneRunId}`,
           recordedAt: "2026-04-29T09:00:00.000Z",
           kind: "hypothesis",
-          message: "",
+          message: "Schema validation fixture.",
         },
       ],
     }),
     audit: {
-      eventRefs: [""],
+      eventRefs: ["audit-fixture"],
     },
     evidence: {
-      bundleRefs: [""],
+      bundleRefs: ["evidence-fixture"],
     },
   });
 }
