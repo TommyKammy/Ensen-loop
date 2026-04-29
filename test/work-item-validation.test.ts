@@ -57,6 +57,41 @@ test("returns actionable validation issues for malformed local work items", asyn
   ]);
 });
 
+test("rejects non-plain objects at the local work item boundary", () => {
+  class PrototypeBackedWorkItem {
+    readonly id = "local-work-item-1";
+    readonly title = "Prototype-backed work item";
+    readonly source = "local-fixture";
+    readonly status = "ready";
+  }
+
+  const classInstance = validateLocalWorkItem(new PrototypeBackedWorkItem());
+  const inheritedFields = validateLocalWorkItem(
+    Object.create({
+      id: "local-work-item-1",
+      title: "Inherited fields work item",
+      source: "local-fixture",
+      status: "ready",
+    }) as unknown,
+  );
+
+  assert.equal(classInstance.ok, false);
+  assert.deepEqual(classInstance.issues, [
+    {
+      path: "$",
+      message: "Local work item input must be a JSON object.",
+    },
+  ]);
+
+  assert.equal(inheritedFields.ok, false);
+  assert.deepEqual(inheritedFields.issues, [
+    {
+      path: "$",
+      message: "Local work item input must be a JSON object.",
+    },
+  ]);
+});
+
 test("throws a validation error that preserves individual local work item issues", async () => {
   assert.throws(
     () => parseLocalWorkItem({
@@ -83,4 +118,3 @@ test("throws a validation error that preserves individual local work item issues
     },
   );
 });
-
