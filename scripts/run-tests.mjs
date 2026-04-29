@@ -24,7 +24,22 @@ async function collectTestFiles(directory) {
   return files;
 }
 
-const testFiles = await collectTestFiles(testRoot);
+let testFiles = [];
+try {
+  testFiles = await collectTestFiles(testRoot);
+} catch (error) {
+  const code =
+    error && typeof error === "object" && "code" in error ? error.code : undefined;
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (code === "ENOENT") {
+    console.error("No compiled test files found in dist/test.");
+  } else {
+    console.error(`Failed to discover compiled test files: ${message}`);
+  }
+
+  process.exit(1);
+}
 
 if (testFiles.length === 0) {
   console.error("No compiled test files found in dist/test.");
