@@ -78,6 +78,7 @@
     "VerificationSummary": {
       "type": "object",
       "additionalProperties": false,
+      "required": ["status"],
       "properties": {
         "status": {
           "type": "string",
