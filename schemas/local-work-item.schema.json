@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ensen-loop.local/schemas/local-work-item.schema.json",
+  "title": "Ensen-loop Phase 1 Local Work Item",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "title", "source", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+      "description": "Stable local work item identifier."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable work item title."
+    },
+    "source": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Local source label for the work item."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ready", "blocked", "running", "completed", "failed"],
+      "description": "Local lifecycle status understood by Phase 1 dry-run planning."
+    }
+  }
+}

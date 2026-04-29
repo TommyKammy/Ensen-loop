@@ -1,0 +1,6 @@
+{
+  "id": "malformed-status",
+  "title": "Malformed status",
+  "source": "local-fixture",
+  "status": "done"
+}
