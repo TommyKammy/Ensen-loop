@@ -54,7 +54,16 @@ test("wires the Phase 1 typecheck quality gate through package, CI, and docs", a
   const agents = await readMarkdown("AGENTS.md");
 
   assert.equal(packageJson.scripts?.typecheck, "tsc -p tsconfig.json --noEmit");
-  assert.match(ciWorkflow, /run:\s*npm run typecheck\b/);
+
+  const typecheckRun = ciWorkflow.search(/run:\s*npm run typecheck\b/);
+  const buildRun = ciWorkflow.search(/run:\s*npm run build\b/);
+  const testRun = ciWorkflow.search(/run:\s*npm (?:run test|test)\b/);
+
+  assert.notEqual(typecheckRun, -1, "CI workflow must run npm run typecheck");
+  assert.notEqual(buildRun, -1, "CI workflow must run npm run build");
+  assert.notEqual(testRun, -1, "CI workflow must run npm test or npm run test");
+  assert.ok(typecheckRun < buildRun, "CI workflow must typecheck before build");
+  assert.ok(typecheckRun < testRun, "CI workflow must typecheck before test");
 
   for (const document of [qualityKit, readme, agents]) {
     assert.match(document, /\bnpm run typecheck\b/);
