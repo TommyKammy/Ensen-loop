@@ -67,6 +67,45 @@ test("serializes lane journal and durable state without starting execution", () 
   });
 });
 
+test("serializes equivalent lane run states canonically", () => {
+  const canonicalState = createTestLaneRunState("canonical-run");
+  const canonicalEntry = canonicalState.journal.entries[0];
+
+  assert.ok(canonicalEntry);
+
+  const reorderedState = {
+    evidence: {
+      bundleRefs: canonicalState.evidence.bundleRefs,
+    },
+    audit: {
+      eventRefs: canonicalState.audit.eventRefs,
+    },
+    journal: {
+      entries: [
+        {
+          message: canonicalEntry.message,
+          kind: canonicalEntry.kind,
+          recordedAt: canonicalEntry.recordedAt,
+          id: canonicalEntry.id,
+        },
+      ],
+      workItemId: canonicalState.journal.workItemId,
+      laneRunId: canonicalState.journal.laneRunId,
+      id: canonicalState.journal.id,
+    },
+    startsAgentExecution: canonicalState.startsAgentExecution,
+    updatedAt: canonicalState.updatedAt,
+    createdAt: canonicalState.createdAt,
+    revision: canonicalState.revision,
+    status: canonicalState.status,
+    workItemId: canonicalState.workItemId,
+    id: canonicalState.id,
+  } as ReturnType<typeof createTestLaneRunState>;
+
+  assert.deepEqual(reorderedState, canonicalState);
+  assert.equal(serializeLaneRunState(reorderedState), serializeLaneRunState(canonicalState));
+});
+
 test("persists lane run state below the configured state root", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 

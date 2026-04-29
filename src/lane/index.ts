@@ -102,7 +102,7 @@ export function createLaneRunState(input: CreateLaneRunStateInput): LaneRunState
 }
 
 export function serializeLaneRunState(state: LaneRunState): string {
-  return JSON.stringify(state, null, 2);
+  return JSON.stringify(toSerializableLaneRunState(state), null, 2);
 }
 
 export function resolveLaneRunStatePath(stateRoot: string, laneRunId: string): string {
@@ -299,6 +299,35 @@ function sameFileStats(left: Stats, right: Stats): boolean {
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error && "code" in error;
+}
+
+function toSerializableLaneRunState(state: LaneRunState): LaneRunState {
+  return {
+    id: state.id,
+    workItemId: state.workItemId,
+    status: state.status,
+    revision: state.revision,
+    createdAt: state.createdAt,
+    updatedAt: state.updatedAt,
+    startsAgentExecution: state.startsAgentExecution,
+    journal: {
+      id: state.journal.id,
+      laneRunId: state.journal.laneRunId,
+      workItemId: state.journal.workItemId,
+      entries: state.journal.entries.map((entry) => ({
+        id: entry.id,
+        recordedAt: entry.recordedAt,
+        kind: entry.kind,
+        message: entry.message,
+      })),
+    },
+    audit: {
+      eventRefs: [...state.audit.eventRefs],
+    },
+    evidence: {
+      bundleRefs: [...state.evidence.bundleRefs],
+    },
+  };
 }
 
 function parseLaneRunState(value: unknown): LaneRunState {
