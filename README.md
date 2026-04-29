@@ -14,7 +14,10 @@ The Phase 1 module boundaries and vocabulary are defined in [docs/architecture/c
 npm ci
 npm run build
 npm test
+node dist/src/cli/index.js dry-run --sample
 ```
+
+`dry-run --sample` emits a deterministic local execution plan as JSON. It describes the work item, lane workspace, agent provider, SCM provider, verification, and evidence intents without creating worktrees, branches, commits, change requests, durable evidence, or invoking external providers.
 
 ## Scope
 
