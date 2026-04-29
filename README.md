@@ -22,10 +22,13 @@ npm run typecheck
 npm run build
 npm test
 node dist/src/cli/index.js dry-run --sample
+node dist/src/cli/index.js run-request <run-request-json-file>
 ```
 
 `dry-run --sample` emits a deterministic local execution plan as JSON. It describes the work item, lane workspace, agent provider, SCM provider, verification, and evidence intents without creating worktrees, branches, commits, change requests, durable evidence, or invoking external providers.
 
+`run-request <run-request-json-file>` reads an EIP RunRequest v1 JSON file, validates it at the protocol input boundary, and emits either `{ "ok": true, "request": ... }` or `{ "ok": false, "issues": [...] }`. The `source` field is protocol input data, not trusted internal authority.
+
 ## Scope
 
-Ensen-loop must remain independently buildable and testable. EIP RunRequest and RunResult support is not implemented in this baseline and belongs to a later phase.
+Ensen-loop must remain independently buildable and testable. EIP RunRequest input support is limited to the explicit file validation boundary. RunResult support belongs to a later phase.
