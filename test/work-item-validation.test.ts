@@ -57,6 +57,37 @@ test("returns actionable validation issues for malformed local work items", asyn
   ]);
 });
 
+test("rejects whitespace-only local work item text fields", () => {
+  const whitespaceTitle = validateLocalWorkItem({
+    id: "valid-id",
+    title: "   ",
+    source: "local",
+    status: "ready",
+  });
+  const whitespaceSource = validateLocalWorkItem({
+    id: "valid-id",
+    title: "Title",
+    source: "\t",
+    status: "ready",
+  });
+
+  assert.equal(whitespaceTitle.ok, false);
+  assert.deepEqual(whitespaceTitle.issues, [
+    {
+      path: "title",
+      message: "title is required and must contain non-whitespace text.",
+    },
+  ]);
+
+  assert.equal(whitespaceSource.ok, false);
+  assert.deepEqual(whitespaceSource.issues, [
+    {
+      path: "source",
+      message: "source is required and must contain non-whitespace text.",
+    },
+  ]);
+});
+
 test("rejects non-plain objects at the local work item boundary", () => {
   class PrototypeBackedWorkItem {
     readonly id = "local-work-item-1";

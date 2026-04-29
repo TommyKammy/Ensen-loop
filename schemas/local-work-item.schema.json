@@ -14,12 +14,14 @@
     "title": {
       "type": "string",
       "minLength": 1,
-      "description": "Human-readable work item title."
+      "pattern": "\\S",
+      "description": "Human-readable work item title containing at least one non-whitespace character."
     },
     "source": {
       "type": "string",
       "minLength": 1,
-      "description": "Local source label for the work item."
+      "pattern": "\\S",
+      "description": "Local source label containing at least one non-whitespace character."
     },
     "status": {
       "type": "string",
