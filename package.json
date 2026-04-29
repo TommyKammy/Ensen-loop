@@ -8,6 +8,7 @@
     "ensen-loop": "./dist/src/cli/index.js"
   },
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "tsc -p tsconfig.json",
     "test": "npm run build && node scripts/run-tests.mjs"
   },

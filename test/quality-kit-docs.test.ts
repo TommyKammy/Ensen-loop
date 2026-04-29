@@ -7,6 +7,10 @@ async function readMarkdown(relativePath: string): Promise<string> {
   return readFile(path.resolve(relativePath), "utf8");
 }
 
+async function readText(relativePath: string): Promise<string> {
+  return readFile(path.resolve(relativePath), "utf8");
+}
+
 test("documents the codex-supervisor handoff boundary", async () => {
   const handoff = await readMarkdown("docs/migration/codex-supervisor-handoff.md");
 
@@ -37,6 +41,32 @@ test("documents the quality kit verification and evidence vocabulary", async () 
 
   for (const term of ["verification", "evidence", "reviewability"]) {
     assert.match(qualityKit, new RegExp(term, "i"));
+  }
+});
+
+test("wires the Phase 1 typecheck quality gate through package, CI, and docs", async () => {
+  const packageJson = JSON.parse(await readText("package.json")) as {
+    scripts?: Record<string, string>;
+  };
+  const ciWorkflow = await readText(".github/workflows/ci.yml");
+  const qualityKit = await readMarkdown("docs/reference/quality-kit.md");
+  const readme = await readMarkdown("README.md");
+  const agents = await readMarkdown("AGENTS.md");
+
+  assert.equal(packageJson.scripts?.typecheck, "tsc -p tsconfig.json --noEmit");
+
+  const typecheckRun = ciWorkflow.search(/run:\s*npm run typecheck\b/);
+  const buildRun = ciWorkflow.search(/run:\s*npm run build\b/);
+  const testRun = ciWorkflow.search(/run:\s*npm (?:run test|test)\b/);
+
+  assert.notEqual(typecheckRun, -1, "CI workflow must run npm run typecheck");
+  assert.notEqual(buildRun, -1, "CI workflow must run npm run build");
+  assert.notEqual(testRun, -1, "CI workflow must run npm test or npm run test");
+  assert.ok(typecheckRun < buildRun, "CI workflow must typecheck before build");
+  assert.ok(typecheckRun < testRun, "CI workflow must typecheck before test");
+
+  for (const document of [qualityKit, readme, agents]) {
+    assert.match(document, /\bnpm run typecheck\b/);
   }
 });
 

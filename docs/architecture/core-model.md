@@ -54,7 +54,7 @@ GitHub and Codex are future adapter examples, not core model requirements. A fut
 
 ## Independence Rules
 
-- Ensen-loop must remain independently installable, buildable, and testable with `npm ci`, `npm run build`, and `npm test`.
+- Ensen-loop must remain independently installable, typecheckable, buildable, and testable with `npm ci`, `npm run typecheck`, `npm run build`, and `npm test`.
 - Ensen-loop must not import implementation code from another Ensen product.
 - Integration with external products, services, or local checkouts must be optional and documented at an explicit adapter boundary.
 - Missing or malformed provenance, scope, auth context, verification, review, or durable state signals must fail closed in the module that owns the boundary.
