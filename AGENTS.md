@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## Ensen Development Charter
+
+Before implementing a change, preserve the Ensen development charter: protocol over shared implementation, bounded execution, evidence before authority, and no premature compliance claims.
+
 ## Repository Boundary
 
 Ensen-loop is the independent development lane engine and successor product to codex-supervisor. Agent work in this repository must keep Ensen-loop usable as a standalone Node/TypeScript project.
