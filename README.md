@@ -8,6 +8,8 @@ This repository starts as a minimal TypeScript/Node project with a build, smoke 
 
 The Phase 1 module boundaries and vocabulary are defined in [docs/architecture/core-model.md](docs/architecture/core-model.md).
 
+The Phase 1 local Work Item validation skeleton is documented in [docs/reference/work-item-contract.md](docs/reference/work-item-contract.md).
+
 ## Commands
 
 ```sh
