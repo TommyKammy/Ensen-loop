@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -96,6 +96,69 @@ test("persists lane run state below the configured state root", async () => {
     assert.deepEqual(await readLaneRunState(stateRoot, state.id), state);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("validates lane run state before persisting", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const invalidRevisionState = {
+      ...createTestLaneRunState("invalid-write-revision"),
+      revision: 0,
+    } as ReturnType<typeof createTestLaneRunState>;
+    const invalidRevisionPath = resolveLaneRunStatePath(stateRoot, invalidRevisionState.id);
+
+    await assert.rejects(
+      () => writeLaneRunState(stateRoot, invalidRevisionState),
+      /Lane run state is malformed/,
+    );
+    await assert.rejects(() => readFile(invalidRevisionPath, "utf8"), /ENOENT/);
+
+    const mismatchedJournalState = {
+      ...createTestLaneRunState("invalid-write-journal"),
+      journal: createLaneJournal({
+        id: "journal-invalid-write-journal",
+        laneRunId: "different-lane-run",
+        workItemId: "work-item-invalid-write-journal",
+        entries: [],
+      }),
+    } as ReturnType<typeof createTestLaneRunState>;
+    const mismatchedJournalPath = resolveLaneRunStatePath(stateRoot, mismatchedJournalState.id);
+
+    await assert.rejects(
+      () => writeLaneRunState(stateRoot, mismatchedJournalState),
+      /Lane run state identifiers do not match the lane run being persisted/,
+    );
+    await assert.rejects(() => readFile(mismatchedJournalPath, "utf8"), /ENOENT/);
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects lane run state access through symlinked storage paths", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-outside-state-"));
+
+  try {
+    await symlink(outsideRoot, path.join(stateRoot, "lane-runs"), "dir");
+
+    const state = createTestLaneRunState("symlink-escape-run");
+    const outsideStatePath = path.join(outsideRoot, `${state.id}.json`);
+    await writeFile(outsideStatePath, `${serializeLaneRunState(state)}\n`, "utf8");
+
+    await assert.rejects(
+      () => writeLaneRunState(stateRoot, state),
+      /symbolic links/,
+    );
+    await assert.rejects(
+      () => readLaneRunState(stateRoot, state.id),
+      /symbolic links/,
+    );
+    assert.equal(await readFile(outsideStatePath, "utf8"), `${serializeLaneRunState(state)}\n`);
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
   }
 });
 

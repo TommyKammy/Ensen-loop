@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, open, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type { LaneAuditRefs } from "../audit/index.js";
@@ -120,17 +121,42 @@ export function resolveLaneRunStatePath(stateRoot: string, laneRunId: string): s
 }
 
 export async function writeLaneRunState(stateRoot: string, state: LaneRunState): Promise<string> {
-  const statePath = resolveLaneRunStatePath(stateRoot, state.id);
+  const validatedState = validateLaneRunStateForWrite(state);
+  const statePath = resolveLaneRunStatePath(stateRoot, validatedState.id);
 
+  await assertLaneRunStatePathSafeForWrite(stateRoot, statePath);
   await mkdir(path.dirname(statePath), { recursive: true });
-  await writeFile(statePath, `${serializeLaneRunState(state)}\n`, "utf8");
+  await assertLaneRunStatePathSafeForWrite(stateRoot, statePath);
+
+  const file = await open(
+    statePath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollowFlag(),
+    0o600,
+  );
+
+  try {
+    await file.writeFile(`${serializeLaneRunState(validatedState)}\n`, "utf8");
+  } finally {
+    await file.close();
+  }
 
   return statePath;
 }
 
 export async function readLaneRunState(stateRoot: string, laneRunId: string): Promise<LaneRunState> {
   const statePath = resolveLaneRunStatePath(stateRoot, laneRunId);
-  const parsed = JSON.parse(await readFile(statePath, "utf8")) as unknown;
+  await assertLaneRunStatePathSafeForRead(stateRoot, statePath);
+
+  const file = await open(statePath, constants.O_RDONLY | noFollowFlag());
+  let contents: string;
+
+  try {
+    contents = await file.readFile("utf8");
+  } finally {
+    await file.close();
+  }
+
+  const parsed = JSON.parse(contents) as unknown;
   const state = parseLaneRunState(parsed);
 
   if (
@@ -142,6 +168,94 @@ export async function readLaneRunState(stateRoot: string, laneRunId: string): Pr
   }
 
   return state;
+}
+
+function validateLaneRunStateForWrite(state: LaneRunState): LaneRunState {
+  const parsed = parseLaneRunState(state);
+
+  if (parsed.journal.laneRunId !== parsed.id || parsed.journal.workItemId !== parsed.workItemId) {
+    throw new Error("Lane run state identifiers do not match the lane run being persisted.");
+  }
+
+  return parsed;
+}
+
+async function assertLaneRunStatePathSafeForWrite(stateRoot: string, statePath: string): Promise<void> {
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const laneRunsRoot = path.join(path.resolve(stateRoot), "lane-runs");
+
+  await assertExistingPathSafe(realRoot, laneRunsRoot, "directory");
+  await assertExistingPathSafe(realRoot, statePath, "file");
+}
+
+async function assertLaneRunStatePathSafeForRead(stateRoot: string, statePath: string): Promise<void> {
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const laneRunsRoot = path.join(path.resolve(stateRoot), "lane-runs");
+
+  await assertExistingPathSafe(realRoot, laneRunsRoot, "directory");
+  await assertExistingPathSafe(realRoot, statePath, "file");
+}
+
+async function resolveCanonicalStateRoot(stateRoot: string): Promise<string> {
+  const resolvedRoot = path.resolve(stateRoot);
+  const stats = await lstat(resolvedRoot).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      throw new Error("Configured state root must exist before lane run state is accessed.");
+    }
+
+    throw error;
+  });
+
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error("Configured state root must be a real directory.");
+  }
+
+  return realpath(resolvedRoot);
+}
+
+async function assertExistingPathSafe(
+  realRoot: string,
+  candidatePath: string,
+  expectedKind: "directory" | "file",
+): Promise<void> {
+  const stats = await lstat(candidatePath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!stats) {
+    return;
+  }
+
+  if (stats.isSymbolicLink()) {
+    throw new Error("Lane run state paths must not traverse symbolic links.");
+  }
+
+  if (expectedKind === "directory" && !stats.isDirectory()) {
+    throw new Error("Lane run state directory path must be a real directory.");
+  }
+
+  if (expectedKind === "file" && stats.isDirectory()) {
+    throw new Error("Lane run state file path must not be a directory.");
+  }
+
+  const realCandidate = await realpath(candidatePath);
+  const relativePath = path.relative(realRoot, realCandidate);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Lane run state paths must stay inside the configured state root.");
+  }
+}
+
+function noFollowFlag(): number {
+  return typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+}
+
+function isNodeError(error: unknown): error is NodeJS.ErrnoException {
+  return error instanceof Error && "code" in error;
 }
 
 function parseLaneRunState(value: unknown): LaneRunState {

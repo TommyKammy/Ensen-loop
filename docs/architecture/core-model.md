@@ -46,7 +46,7 @@ Audit and evidence surfaces are represented as explicit reference lists on the L
 - `audit.eventRefs` reserves the relationship to future audit events without emitting a full EIP AuditEvent.
 - `evidence.bundleRefs` reserves the relationship to future evidence bundles without emitting a full EvidenceBundleRef.
 
-Local storage helpers must resolve lane run state paths below the configured state root and reject lane run identifiers containing path separators or traversal syntax. Derived summaries, detail projections, or operator-facing notes must be rebuilt from the Lane Run State instead of redefining the durable status.
+Local storage helpers must resolve lane run state paths below a real configured state root, reject lane run identifiers containing path separators or traversal syntax, and fail closed when existing storage components are symbolic links. Derived summaries, detail projections, or operator-facing notes must be rebuilt from the Lane Run State instead of redefining the durable status.
 
 ## Provider Posture
 
