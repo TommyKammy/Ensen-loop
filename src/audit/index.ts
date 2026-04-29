@@ -1,1 +1,3 @@
-export type { DurableState, LaneJournal } from "../core/index.js";
+export interface LaneAuditRefs {
+  readonly eventRefs: readonly string[];
+}

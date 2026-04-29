@@ -62,26 +62,9 @@ export interface ReviewEvent {
   readonly kind: "comment" | "approval" | "change-request" | "dismissal";
 }
 
-export interface LaneJournal {
-  readonly workItemId: WorkItem["id"];
-  readonly entries: readonly string[];
-}
-
-export interface DurableState {
-  readonly laneRunId: string;
-  readonly revision: number;
-  readonly updatedAt: string;
-}
-
 export interface EvidenceBundle {
   readonly workItemId: WorkItem["id"];
   readonly reviewEvents: readonly ReviewEvent[];
   readonly verification: readonly VerificationResult[];
   readonly notes: readonly string[];
-}
-
-export interface LaneRun {
-  readonly id: string;
-  readonly workItemId: WorkItem["id"];
-  readonly state: "queued" | "running" | "verifying" | "reviewing" | "completed" | "failed";
 }

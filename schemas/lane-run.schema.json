@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://ensen-loop.local/schemas/lane-run.schema.json",
+  "title": "Ensen-loop Lane Run State",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "workItemId",
+    "status",
+    "revision",
+    "createdAt",
+    "updatedAt",
+    "startsAgentExecution",
+    "journal",
+    "audit",
+    "evidence"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "workItemId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "verifying", "reviewing", "completed", "failed"]
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "startsAgentExecution": {
+      "const": false
+    },
+    "journal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "laneRunId", "workItemId", "entries"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "laneRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "workItemId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "entries": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "recordedAt", "kind", "message"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "recordedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "kind": {
+                "type": "string",
+                "enum": ["hypothesis", "command", "failure", "change", "next-action"]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "audit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["eventRefs"],
+      "properties": {
+        "eventRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["bundleRefs"],
+      "properties": {
+        "bundleRefs": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}
