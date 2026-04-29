@@ -99,6 +99,61 @@ test("persists lane run state below the configured state root", async () => {
   }
 });
 
+test("rejects durable lane run state that does not match the requested run", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const statePath = resolveLaneRunStatePath(stateRoot, "requested-run");
+    const copiedState = createLaneRunState({
+      id: "copied-run",
+      workItemId: "work-item-copied",
+      status: "queued",
+      revision: 1,
+      createdAt: "2026-04-29T09:00:00.000Z",
+      updatedAt: "2026-04-29T09:00:00.000Z",
+      journal: createLaneJournal({
+        id: "journal-copied",
+        laneRunId: "copied-run",
+        workItemId: "work-item-copied",
+        entries: [],
+      }),
+    });
+
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await writeFile(statePath, serializeLaneRunState(copiedState), "utf8");
+
+    await assert.rejects(
+      () => readLaneRunState(stateRoot, "requested-run"),
+      /Lane run state identifiers do not match the requested lane run/,
+    );
+
+    const workItemMismatchPath = resolveLaneRunStatePath(stateRoot, "work-item-mismatch-run");
+    const workItemMismatchState = createLaneRunState({
+      id: "work-item-mismatch-run",
+      workItemId: "work-item-state",
+      status: "queued",
+      revision: 1,
+      createdAt: "2026-04-29T09:00:00.000Z",
+      updatedAt: "2026-04-29T09:00:00.000Z",
+      journal: createLaneJournal({
+        id: "journal-work-item-mismatch",
+        laneRunId: "work-item-mismatch-run",
+        workItemId: "work-item-journal",
+        entries: [],
+      }),
+    });
+
+    await writeFile(workItemMismatchPath, serializeLaneRunState(workItemMismatchState), "utf8");
+
+    await assert.rejects(
+      () => readLaneRunState(stateRoot, "work-item-mismatch-run"),
+      /Lane run state identifiers do not match the requested lane run/,
+    );
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("rejects lane run state paths outside the configured state root", () => {
   const stateRoot = path.join(os.tmpdir(), "ensen-loop-state-root");
 
@@ -110,6 +165,62 @@ test("rejects lane run state paths outside the configured state root", () => {
     () => resolveLaneRunStatePath(stateRoot, "nested/outside"),
     /Lane run identifiers may only contain/,
   );
+});
+
+test("rejects lane run state payloads that violate the published schema shape", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  const cases: readonly [string, (state: Record<string, unknown>) => void][] = [
+    ["revision-zero", (state) => {
+      state.revision = 0;
+    }],
+    ["empty-work-item", (state) => {
+      state.workItemId = "";
+    }],
+    ["invalid-created-at", (state) => {
+      state.createdAt = "2026-04-29";
+    }],
+    ["impossible-recorded-at", (state) => {
+      const journal = state.journal as Record<string, unknown>;
+      const entries = journal.entries as Record<string, unknown>[];
+      entries[0].recordedAt = "2026-02-31T09:00:00.000Z";
+    }],
+    ["extra-top-level-property", (state) => {
+      state.extra = true;
+    }],
+    ["extra-journal-property", (state) => {
+      (state.journal as Record<string, unknown>).extra = true;
+    }],
+    ["extra-entry-property", (state) => {
+      const journal = state.journal as Record<string, unknown>;
+      const entries = journal.entries as Record<string, unknown>[];
+      entries[0].extra = true;
+    }],
+    ["extra-audit-property", (state) => {
+      (state.audit as Record<string, unknown>).extra = true;
+    }],
+    ["extra-evidence-property", (state) => {
+      (state.evidence as Record<string, unknown>).extra = true;
+    }],
+  ];
+
+  try {
+    for (const [laneRunId, mutate] of cases) {
+      const statePath = resolveLaneRunStatePath(stateRoot, laneRunId);
+      const state = JSON.parse(serializeLaneRunState(createTestLaneRunState(laneRunId))) as Record<string, unknown>;
+      mutate(state);
+
+      await mkdir(path.dirname(statePath), { recursive: true });
+      await writeFile(statePath, JSON.stringify(state), "utf8");
+
+      await assert.rejects(
+        () => readLaneRunState(stateRoot, laneRunId),
+        /Lane run state is malformed|Lane run state identifiers do not match/,
+      );
+    }
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
 });
 
 test("rejects malformed durable lane run state on read", async () => {
@@ -152,3 +263,33 @@ test("rejects malformed durable lane run state on read", async () => {
     await rm(stateRoot, { recursive: true, force: true });
   }
 });
+
+function createTestLaneRunState(laneRunId: string) {
+  return createLaneRunState({
+    id: laneRunId,
+    workItemId: `work-item-${laneRunId}`,
+    status: "queued",
+    revision: 1,
+    createdAt: "2026-04-29T09:00:00.000Z",
+    updatedAt: "2026-04-29T09:00:00.000Z",
+    journal: createLaneJournal({
+      id: `journal-${laneRunId}`,
+      laneRunId,
+      workItemId: `work-item-${laneRunId}`,
+      entries: [
+        {
+          id: `entry-${laneRunId}`,
+          recordedAt: "2026-04-29T09:00:00.000Z",
+          kind: "hypothesis",
+          message: "",
+        },
+      ],
+    }),
+    audit: {
+      eventRefs: [""],
+    },
+    evidence: {
+      bundleRefs: [""],
+    },
+  });
+}

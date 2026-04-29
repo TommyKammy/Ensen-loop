@@ -63,6 +63,8 @@ export interface CreateLaneRunStateInput {
 }
 
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const isoDateTimePattern =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const laneRunStatuses = new Set<unknown>([
   "queued",
   "running",
@@ -129,8 +131,17 @@ export async function writeLaneRunState(stateRoot: string, state: LaneRunState):
 export async function readLaneRunState(stateRoot: string, laneRunId: string): Promise<LaneRunState> {
   const statePath = resolveLaneRunStatePath(stateRoot, laneRunId);
   const parsed = JSON.parse(await readFile(statePath, "utf8")) as unknown;
+  const state = parseLaneRunState(parsed);
 
-  return parseLaneRunState(parsed);
+  if (
+    state.id !== laneRunId ||
+    state.journal.laneRunId !== laneRunId ||
+    state.journal.workItemId !== state.workItemId
+  ) {
+    throw new Error("Lane run state identifiers do not match the requested lane run.");
+  }
+
+  return state;
 }
 
 function parseLaneRunState(value: unknown): LaneRunState {
@@ -143,13 +154,26 @@ function parseLaneRunState(value: unknown): LaneRunState {
   }
 
   if (
-    typeof value.id !== "string" ||
-    typeof value.workItemId !== "string" ||
+    !hasExactKeys(value, [
+      "id",
+      "workItemId",
+      "status",
+      "revision",
+      "createdAt",
+      "updatedAt",
+      "startsAgentExecution",
+      "journal",
+      "audit",
+      "evidence",
+    ]) ||
+    !isLaneRunId(value.id) ||
+    !isNonEmptyString(value.workItemId) ||
     !laneRunStatuses.has(value.status) ||
     typeof value.revision !== "number" ||
     !Number.isInteger(value.revision) ||
-    typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string" ||
+    value.revision < 1 ||
+    !isIsoDateTime(value.createdAt) ||
+    !isIsoDateTime(value.updatedAt) ||
     !isLaneJournal(value.journal) ||
     !isAuditRefs(value.audit) ||
     !isEvidenceRefs(value.evidence)
@@ -163,9 +187,10 @@ function parseLaneRunState(value: unknown): LaneRunState {
 function isLaneJournal(value: unknown): value is LaneJournal {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.laneRunId === "string" &&
-    typeof value.workItemId === "string" &&
+    hasExactKeys(value, ["id", "laneRunId", "workItemId", "entries"]) &&
+    isNonEmptyString(value.id) &&
+    isNonEmptyString(value.laneRunId) &&
+    isNonEmptyString(value.workItemId) &&
     Array.isArray(value.entries) &&
     value.entries.every(isLaneJournalEntry)
   );
@@ -174,23 +199,92 @@ function isLaneJournal(value: unknown): value is LaneJournal {
 function isLaneJournalEntry(value: unknown): value is LaneJournalEntry {
   return (
     isRecord(value) &&
-    typeof value.id === "string" &&
-    typeof value.recordedAt === "string" &&
+    hasExactKeys(value, ["id", "recordedAt", "kind", "message"]) &&
+    isNonEmptyString(value.id) &&
+    isIsoDateTime(value.recordedAt) &&
     ["hypothesis", "command", "failure", "change", "next-action"].includes(String(value.kind)) &&
     typeof value.message === "string"
   );
 }
 
 function isAuditRefs(value: unknown): value is LaneAuditRefs {
-  return isRecord(value) && Array.isArray(value.eventRefs) && value.eventRefs.every(isString);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["eventRefs"]) &&
+    Array.isArray(value.eventRefs) &&
+    value.eventRefs.every(isString)
+  );
 }
 
 function isEvidenceRefs(value: unknown): value is LaneEvidenceRefs {
-  return isRecord(value) && Array.isArray(value.bundleRefs) && value.bundleRefs.every(isString);
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, ["bundleRefs"]) &&
+    Array.isArray(value.bundleRefs) &&
+    value.bundleRefs.every(isString)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, expectedKeys: readonly string[]): boolean {
+  const valueKeys = Object.keys(value);
+
+  return valueKeys.length === expectedKeys.length && expectedKeys.every((key) => Object.hasOwn(value, key));
+}
+
+function isLaneRunId(value: unknown): value is string {
+  return typeof value === "string" && laneRunIdPattern.test(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0;
+}
+
+function isIsoDateTime(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const match = isoDateTimePattern.exec(value);
+
+  if (!match) {
+    return false;
+  }
+
+  const [, year, month, day, hour, minute, second, timezone] = match;
+  const yearNumber = Number(year);
+  const monthNumber = Number(month);
+  const dayNumber = Number(day);
+  const hourNumber = Number(hour);
+  const minuteNumber = Number(minute);
+  const secondNumber = Number(second);
+
+  if (
+    monthNumber < 1 ||
+    monthNumber > 12 ||
+    dayNumber < 1 ||
+    hourNumber > 23 ||
+    minuteNumber > 59 ||
+    secondNumber > 59
+  ) {
+    return false;
+  }
+
+  if (timezone !== "Z") {
+    const timezoneHour = Number(timezone.slice(1, 3));
+    const timezoneMinute = Number(timezone.slice(4, 6));
+
+    if (timezoneHour > 23 || timezoneMinute > 59) {
+      return false;
+    }
+  }
+
+  const daysInMonth = new Date(Date.UTC(yearNumber, monthNumber, 0)).getUTCDate();
+
+  return dayNumber <= daysInMonth && Number.isFinite(Date.parse(value));
 }
 
 function isString(value: unknown): value is string {
