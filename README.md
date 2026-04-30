@@ -39,4 +39,4 @@ EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper 
 
 ## Scope
 
-Ensen-loop must remain independently buildable and testable. EIP RunRequest input support is limited to the explicit file validation and dry-run status boundary. RunResult support belongs to a later phase.
+Ensen-loop must remain independently buildable and testable. EIP RunRequest input support is limited to explicit file validation and dry-run status/result boundaries. RunResult boundary validation and dry-run output are present for fixture compatibility; full RunResult lifecycle support, execution, storage, and durable packaging belong to a later phase.
