@@ -7,6 +7,7 @@ import path from "node:path";
 import type { LaneAuditRefs } from "../audit/index.js";
 import type { WorkItem } from "../core/index.js";
 import type { LaneEvidenceRefs } from "../evidence/index.js";
+import type { EvidenceBundleRef } from "../protocol/index.js";
 import { sampleLocalWorkItem } from "../work-item/index.js";
 
 export type LaneRunStatus =
@@ -497,6 +498,7 @@ export interface DryRunExecutionPlan {
   readonly evidence: {
     readonly intent: string;
     readonly writesDurableEvidence: false;
+    readonly bundleRefs: readonly EvidenceBundleRef[];
   };
 }
 
@@ -523,8 +525,25 @@ export function createSampleDryRunExecutionPlan(): DryRunExecutionPlan {
       commands: ["npm run build", "npm test"],
     },
     evidence: {
-      intent: "describe evidence capture without writing durable evidence",
+      intent:
+        "describe validation-ready evidence metadata without writing a full evidence bundle artifact",
       writesDurableEvidence: false,
+      bundleRefs: [
+        {
+          schemaVersion: "eip.evidence-bundle-ref.v1",
+          id: "evb_sampleDryRunEvidenceRef01",
+          correlationId: "corr_sampleDryRunEvidenceRef01",
+          type: "local_path",
+          uri: "artifacts/evidence/dry-run/sample-bundle.json",
+          createdAt: "2026-04-29T00:00:00Z",
+          contentType: "application/json",
+          metadata: {
+            producer: "ensen-loop",
+            artifactKind: "validationReadyEvidenceMetadata",
+            writesDurableEvidence: false,
+          },
+        },
+      ],
     },
   };
 }

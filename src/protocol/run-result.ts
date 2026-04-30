@@ -27,7 +27,7 @@ export interface ChangeRequestRef {
   readonly status?: "draft" | "open" | "accepted" | "rejected" | "superseded";
 }
 
-export interface EvidenceBundleRef {
+export interface RunResultEvidenceBundleRef {
   readonly evidenceBundleId: string;
   readonly digest?: string;
 }
@@ -59,7 +59,7 @@ export interface RunResult {
   readonly status: RunResultStatus;
   readonly completedAt: string;
   readonly changeRequests?: readonly ChangeRequestRef[];
-  readonly evidenceBundles?: readonly EvidenceBundleRef[];
+  readonly evidenceBundles?: readonly RunResultEvidenceBundleRef[];
   readonly verification?: VerificationSummary;
   readonly errors?: readonly RunResultErrorInfo[];
   readonly warnings?: readonly RunResultWarningInfo[];
@@ -71,7 +71,7 @@ export interface CreateRunResultOptions {
   readonly status: "succeeded" | "failed" | "blocked";
   readonly completedAt: string;
   readonly verification?: VerificationSummary;
-  readonly evidenceBundles?: readonly EvidenceBundleRef[];
+  readonly evidenceBundles?: readonly RunResultEvidenceBundleRef[];
   readonly errors?: readonly RunResultErrorInfo[];
   readonly warnings?: readonly RunResultWarningInfo[];
   readonly durationMs?: number;
