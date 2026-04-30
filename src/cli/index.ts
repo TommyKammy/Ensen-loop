@@ -9,9 +9,11 @@ import {
 import {
   createBlockedRunResultFromValidationIssues,
   createBlockedRunStatusSnapshotFromValidationIssues,
+  createBlockedXGate2SmokeOutput,
   createRunRequestExecutionPlan,
   createRunResult,
   createRunStatusSnapshot,
+  createXGate2SmokeOutput,
   validateRunRequest,
 } from "../protocol/index.js";
 import type { CreateRunResultOptions } from "../protocol/index.js";
@@ -114,6 +116,34 @@ async function main(): Promise<number> {
     return result.ok ? 0 : 1;
   }
 
+  if (command === "x-gate2-smoke") {
+    if (args.length !== 1) {
+      console.error("Usage: ensen-loop x-gate2-smoke <run-request-json-file>");
+      return 1;
+    }
+
+    const filePath = args[0];
+    if (filePath === undefined) {
+      console.error("Usage: ensen-loop x-gate2-smoke <run-request-json-file>");
+      return 1;
+    }
+
+    const input = await readJsonFile(filePath);
+    const result = validateRunRequest(input);
+
+    if (!result.ok) {
+      const output = createBlockedXGate2SmokeOutput(input, result.issues);
+
+      printJson(output ?? result);
+      return 1;
+    }
+
+    const output = createXGate2SmokeOutput(result.request);
+
+    printJson(output);
+    return output.runResult.status === "succeeded" ? 0 : 1;
+  }
+
   if (command === undefined) {
     console.log(describeProduct());
     return 0;
@@ -124,6 +154,7 @@ async function main(): Promise<number> {
   console.error(
     "Usage: ensen-loop run-request <run-request-json-file> [--status-snapshot accepted|queued|running|blocked|--run-result succeeded|failed|blocked]",
   );
+  console.error("Usage: ensen-loop x-gate2-smoke <run-request-json-file>");
   return 1;
 }
 
