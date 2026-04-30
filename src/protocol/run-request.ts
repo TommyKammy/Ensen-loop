@@ -57,6 +57,69 @@ export interface RunRequestValidationIssue {
   readonly message: string;
 }
 
+export interface BoundedRunRequestInputFact {
+  readonly name: string;
+  readonly value: unknown;
+  readonly trustedAuthority: false;
+}
+
+export interface RunRequestExecutionPlan {
+  readonly command: "run-request";
+  readonly mode: RunRequest["mode"];
+  readonly source: "eip.run-request";
+  readonly status: "ready" | "blocked";
+  readonly blockedReasons: readonly string[];
+  readonly provenance: {
+    readonly requestId: string;
+    readonly correlationId: string;
+    readonly idempotencyKey: string;
+    readonly schemaVersion: RunRequest["schemaVersion"];
+    readonly createdAt: string;
+    readonly source: RunRequestSource;
+  };
+  readonly workItem: {
+    readonly id: string;
+    readonly title: string;
+    readonly source: string;
+    readonly status: "ready" | "blocked";
+  };
+  readonly requestIdentity: {
+    readonly requestedBy: RunRequestActor;
+    readonly workItemExternalId: string;
+    readonly workItemUrl?: string;
+  };
+  readonly boundedInputFacts: readonly BoundedRunRequestInputFact[];
+  readonly laneWorkspace: {
+    readonly intent: string;
+    readonly mutatesFilesystem: false;
+    readonly target?: RunRequestTarget;
+  };
+  readonly agentProvider: {
+    readonly intent: string;
+    readonly invokesProvider: false;
+  };
+  readonly scmProvider: {
+    readonly intent: string;
+    readonly createsBranch: false;
+    readonly opensChangeRequest: false;
+  };
+  readonly policy: {
+    readonly intent: string;
+    readonly trustedAuthority: false;
+    readonly policySetId?: string;
+    readonly riskClasses: readonly string[];
+    readonly requiresApproval: boolean;
+  };
+  readonly verification: {
+    readonly intent: string;
+    readonly commands: readonly string[];
+  };
+  readonly evidence: {
+    readonly intent: string;
+    readonly writesDurableEvidence: false;
+  };
+}
+
 export interface RunRequestValidationSuccess {
   readonly ok: true;
   readonly request: RunRequest;
@@ -168,6 +231,157 @@ export function parseRunRequest(value: unknown): RunRequest {
   }
 
   return result.request;
+}
+
+export function createRunRequestExecutionPlan(request: RunRequest): RunRequestExecutionPlan {
+  const blockedReasons = collectRunRequestPlanBlockedReasons(request);
+  const status = blockedReasons.length === 0 ? "ready" : "blocked";
+
+  return {
+    command: "run-request",
+    mode: request.mode,
+    source: "eip.run-request",
+    status,
+    blockedReasons,
+    provenance: {
+      requestId: request.id,
+      correlationId: request.correlationId,
+      idempotencyKey: request.idempotencyKey,
+      schemaVersion: request.schemaVersion,
+      createdAt: request.createdAt,
+      source: { ...request.source },
+    },
+    workItem: {
+      id: request.workItem.workItemId,
+      title: request.workItem.title ?? request.workItem.externalId,
+      source: `eip.run-request:${request.source.sourceType}`,
+      status,
+    },
+    requestIdentity: createRunRequestIdentity(request),
+    boundedInputFacts: collectBoundedInputFacts(request),
+    laneWorkspace: createLaneWorkspacePlan(request),
+    agentProvider: {
+      intent: "normalize agent intent without invoking a provider",
+      invokesProvider: false,
+    },
+    scmProvider: {
+      intent: "normalize repository intent without creating branches, commits, or change requests",
+      createsBranch: false,
+      opensChangeRequest: false,
+    },
+    policy: createPolicyPlan(request),
+    verification: {
+      intent: "normalize verification intent without running checks",
+      commands: [],
+    },
+    evidence: {
+      intent: "normalize evidence intent without writing durable evidence",
+      writesDurableEvidence: false,
+    },
+  };
+}
+
+function collectRunRequestPlanBlockedReasons(request: RunRequest): readonly string[] {
+  const reasons: string[] = [];
+
+  if (request.target === undefined) {
+    reasons.push("target is required before execution can be planned");
+  }
+
+  if (request.policyContext === undefined) {
+    reasons.push("policyContext is required before execution can be planned");
+  }
+
+  return reasons;
+}
+
+function createRunRequestIdentity(
+  request: RunRequest,
+): RunRequestExecutionPlan["requestIdentity"] {
+  const identity: RunRequestExecutionPlan["requestIdentity"] = {
+    requestedBy: { ...request.requestedBy },
+    workItemExternalId: request.workItem.externalId,
+  };
+
+  if (request.workItem.url !== undefined) {
+    return {
+      ...identity,
+      workItemUrl: request.workItem.url,
+    };
+  }
+
+  return identity;
+}
+
+function collectBoundedInputFacts(
+  request: RunRequest,
+): readonly BoundedRunRequestInputFact[] {
+  const facts: BoundedRunRequestInputFact[] = [];
+
+  pushOptionalFact(facts, "source.externalRef", request.source.externalRef);
+  pushOptionalFact(facts, "workItem.externalId", request.workItem.externalId);
+  pushOptionalFact(facts, "workItem.url", request.workItem.url);
+  pushOptionalFact(facts, "target.externalRef", request.target?.externalRef);
+
+  for (const [key, value] of Object.entries(request.extensions ?? {}).sort(([left], [right]) =>
+    compareCodePoints(left, right),
+  )) {
+    pushOptionalFact(facts, `extensions.${key}`, value);
+  }
+
+  return facts;
+}
+
+function pushOptionalFact(
+  facts: BoundedRunRequestInputFact[],
+  name: string,
+  value: unknown,
+): void {
+  if (value === undefined) {
+    return;
+  }
+
+  facts.push({
+    name,
+    value,
+    trustedAuthority: false,
+  });
+}
+
+function createLaneWorkspacePlan(
+  request: RunRequest,
+): RunRequestExecutionPlan["laneWorkspace"] {
+  const plan: RunRequestExecutionPlan["laneWorkspace"] = {
+    intent: "normalize request scope without preparing a workspace",
+    mutatesFilesystem: false,
+  };
+
+  if (request.target !== undefined) {
+    return {
+      ...plan,
+      target: { ...request.target },
+    };
+  }
+
+  return plan;
+}
+
+function createPolicyPlan(request: RunRequest): RunRequestExecutionPlan["policy"] {
+  return {
+    intent: "record policy hints without granting execution authority",
+    trustedAuthority: false,
+    policySetId: request.policyContext?.policySetId,
+    riskClasses: [...(request.policyContext?.riskClasses ?? [])],
+    requiresApproval: request.policyContext?.requiresApproval ?? false,
+  };
+}
+
+function compareCodePoints(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+
+  return left < right ? -1 : 1;
 }
 
 function collectRunRequestIssues(value: unknown): readonly RunRequestValidationIssue[] {
