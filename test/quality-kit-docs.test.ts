@@ -76,3 +76,40 @@ test("documents the codex-supervisor migration bridge as non-core vocabulary", a
   assert.match(bridgeReadme, /migration bridge/i);
   assert.match(bridgeReadme, /not the long-term core vocabulary/i);
 });
+
+test("documents the Phase 3 local lane execution contract", async () => {
+  const contract = await readMarkdown("docs/architecture/local-lane-execution.md");
+  const readme = await readMarkdown("README.md");
+
+  for (const term of [
+    "RunRequest v1",
+    "LaneRunState",
+    "RunStatusSnapshot",
+    "RunResult",
+    "EvidenceBundleRef",
+    "unsupported EIP major versions",
+    "TommyKammy/Ensen-protocol#28",
+    "X-Gate 2",
+    "production automation",
+  ]) {
+    assert.match(contract, new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  for (const phrase of [
+    "does not invoke an Agent Provider",
+    "does not require Ensen-flow",
+    "fail closed",
+    "stable identifiers",
+    "workspace root",
+    "state root",
+    "ambiguous executor outcome",
+  ]) {
+    assert.match(contract, new RegExp(phrase, "i"));
+  }
+
+  assert.match(readme, /docs\/architecture\/local-lane-execution\.md/);
+  assert.doesNotMatch(
+    contract,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});
