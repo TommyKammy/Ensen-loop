@@ -25,6 +25,7 @@ node --test dist/test/eip-conformance-fixtures.test.js
 node dist/src/cli/index.js dry-run --sample
 node dist/src/cli/index.js run-request <run-request-json-file>
 node dist/src/cli/index.js run-request <run-request-json-file> --status-snapshot queued
+node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
 ```
 
 `npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.1.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures.
@@ -34,6 +35,8 @@ node dist/src/cli/index.js run-request <run-request-json-file> --status-snapshot
 `run-request <run-request-json-file>` reads an EIP RunRequest v1 JSON file, validates it at the protocol input boundary, and emits either `{ "ok": true, "request": ... }` or `{ "ok": false, "issues": [...] }`. The `source` field is protocol input data, not trusted internal authority.
 
 `run-request <run-request-json-file> --status-snapshot accepted|queued|running|blocked` emits a RunStatusSnapshot-compatible dry-run polling snapshot for the request. The mode maps only Ensen-loop dry-run lifecycle facts; it does not read Ensen-flow workflow state, approval state, or final RunResult fields. If validation or plan normalization blocks the dry run and valid request/correlation identifiers are available, the command emits a blocked status snapshot with actionable reasons under `extensions.x-ensen-loop-blocked-reasons`.
+
+`x-gate2-smoke <run-request-json-file>` emits the X-Gate 2 narrow loop-flow dry-run smoke payload to stdout. The JSON payload contains deterministic `statusSnapshot`, `runResult`, and `evidenceBundleRef` fields for a valid EIP RunRequest v1 fixture. The EvidenceBundleRef uses a relative local artifact URI under `artifacts/evidence/x-gate2/<request-id>.json`; the command describes that artifact location but does not create or write the artifact. The smoke path does not create a repository, branch, worktree, GitHub issue, pull request, Codex session, durable evidence bundle, or provider call. Invalid RunRequest input and unsupported EIP major versions fail closed with blocked status/result output when stable request and correlation identifiers are available.
 
 EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.1.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
 
