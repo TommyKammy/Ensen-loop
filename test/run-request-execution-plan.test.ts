@@ -7,6 +7,13 @@ import {
   createRunRequestExecutionPlan,
   parseRunRequest,
 } from "../src/protocol/index.js";
+import type { RunRequest } from "../src/protocol/index.js";
+
+type Mutable<T> = T extends readonly (infer Item)[]
+  ? Mutable<Item>[]
+  : T extends object
+    ? { -readonly [Property in keyof T]: Mutable<T[Property]> }
+    : T;
 
 const runRequestFixtureRoot = path.join(
   "protocol-snapshots",
@@ -145,4 +152,49 @@ test("maps incomplete manual RunRequest scope into a blocked plan", async () => 
   assert.equal(plan.agentProvider.invokesProvider, false);
   assert.equal(plan.scmProvider.createsBranch, false);
   assert.equal(plan.evidence.writesDurableEvidence, false);
+});
+
+test("copies mutable request boundary fields into the execution plan", async () => {
+  const request = (await readRunRequestFixture("github-issue-request.json")) as Mutable<RunRequest>;
+
+  const plan = createRunRequestExecutionPlan(request);
+
+  assert.ok(request.target);
+  assert.ok(request.policyContext?.riskClasses);
+  assert.notStrictEqual(plan.provenance.source, request.source);
+  assert.notStrictEqual(plan.requestIdentity.requestedBy, request.requestedBy);
+  assert.notStrictEqual(plan.laneWorkspace.target, request.target);
+  assert.notStrictEqual(plan.policy.riskClasses, request.policyContext.riskClasses);
+
+  request.source.externalRef = "mutated/source";
+  request.requestedBy.displayName = "Mutated requester";
+  request.target.externalRef = "mutated/target";
+  request.policyContext.riskClasses.push("mutated-risk");
+
+  assert.equal(plan.provenance.source.externalRef, "TommyKammy/Ensen-protocol");
+  assert.equal(plan.requestIdentity.requestedBy.displayName, "Ensen issue dispatcher");
+  assert.equal(plan.laneWorkspace.target?.externalRef, "TommyKammy/Ensen-protocol");
+  assert.deepEqual(plan.policy.riskClasses, ["secrets"]);
+});
+
+test("orders extension facts with locale-independent code point comparison", async () => {
+  const fixtureRequest = await readRunRequestFixture("github-issue-request.json");
+  const request: RunRequest = {
+    ...fixtureRequest,
+    extensions: {
+      "x-z": 3,
+      "x-ä": 4,
+      "x-a": 2,
+      "x-Z": 1,
+    },
+  };
+
+  const plan = createRunRequestExecutionPlan(request);
+
+  assert.deepEqual(
+    plan.boundedInputFacts
+      .filter((fact) => fact.name.startsWith("extensions."))
+      .map((fact) => fact.name),
+    ["extensions.x-Z", "extensions.x-a", "extensions.x-z", "extensions.x-ä"],
+  );
 });

@@ -249,7 +249,7 @@ export function createRunRequestExecutionPlan(request: RunRequest): RunRequestEx
       idempotencyKey: request.idempotencyKey,
       schemaVersion: request.schemaVersion,
       createdAt: request.createdAt,
-      source: request.source,
+      source: { ...request.source },
     },
     workItem: {
       id: request.workItem.workItemId,
@@ -299,7 +299,7 @@ function createRunRequestIdentity(
   request: RunRequest,
 ): RunRequestExecutionPlan["requestIdentity"] {
   const identity: RunRequestExecutionPlan["requestIdentity"] = {
-    requestedBy: request.requestedBy,
+    requestedBy: { ...request.requestedBy },
     workItemExternalId: request.workItem.externalId,
   };
 
@@ -324,7 +324,7 @@ function collectBoundedInputFacts(
   pushOptionalFact(facts, "target.externalRef", request.target?.externalRef);
 
   for (const [key, value] of Object.entries(request.extensions ?? {}).sort(([left], [right]) =>
-    left.localeCompare(right),
+    compareCodePoints(left, right),
   )) {
     pushOptionalFact(facts, `extensions.${key}`, value);
   }
@@ -359,7 +359,7 @@ function createLaneWorkspacePlan(
   if (request.target !== undefined) {
     return {
       ...plan,
-      target: request.target,
+      target: { ...request.target },
     };
   }
 
@@ -371,9 +371,17 @@ function createPolicyPlan(request: RunRequest): RunRequestExecutionPlan["policy"
     intent: "record policy hints without granting execution authority",
     trustedAuthority: false,
     policySetId: request.policyContext?.policySetId,
-    riskClasses: request.policyContext?.riskClasses ?? [],
+    riskClasses: [...(request.policyContext?.riskClasses ?? [])],
     requiresApproval: request.policyContext?.requiresApproval ?? false,
   };
+}
+
+function compareCodePoints(left: string, right: string): number {
+  if (left === right) {
+    return 0;
+  }
+
+  return left < right ? -1 : 1;
 }
 
 function collectRunRequestIssues(value: unknown): readonly RunRequestValidationIssue[] {
