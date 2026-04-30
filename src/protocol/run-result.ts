@@ -257,7 +257,7 @@ function createDryRunVerification(
 
   if (status === "failed") {
     return {
-      status: "failed",
+      status: "not_run",
       summary: "Dry-run failed before agent execution or verification commands ran.",
     };
   }

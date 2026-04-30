@@ -24,7 +24,7 @@ async function readJson(relativePath: string): Promise<unknown> {
   return JSON.parse(await readFile(path.join(fixtureRoot, relativePath), "utf8")) as unknown;
 }
 
-test("emits RunResult-compatible dry-run succeeded and blocked outputs", async () => {
+test("emits RunResult-compatible dry-run terminal outputs", async () => {
   const readyRequest = parseRunRequest(
     await readJson("run-request/v1/valid/github-issue-request.json"),
   );
@@ -48,13 +48,28 @@ test("emits RunResult-compatible dry-run succeeded and blocked outputs", async (
   assert.equal(Object.hasOwn(succeeded, "changeRequests"), false);
   assert.equal(Object.hasOwn(succeeded, "evidenceBundles"), false);
 
+  const failed = createRunResult(readyPlan, {
+    status: "failed",
+    completedAt: "2026-04-30T00:00:05Z",
+  });
+
+  assert.equal(validateRunResult(failed).ok, true);
+  assert.equal(failed.requestId, readyRequest.id);
+  assert.equal(failed.status, "failed");
+  assert.deepEqual(failed.verification, {
+    status: "not_run",
+    summary: "Dry-run failed before agent execution or verification commands ran.",
+  });
+  assert.equal(failed.errors?.[0]?.code, "DRY_RUN_FAILED");
+  assert.equal(failed.errors?.[0]?.retryable, false);
+
   const blockedRequest = parseRunRequest(
     await readJson("run-request/v1/valid/manual-request.json"),
   );
   const blockedPlan = createRunRequestExecutionPlan(blockedRequest);
   const blocked = createRunResult(blockedPlan, {
     status: "blocked",
-    completedAt: "2026-04-30T00:00:05Z",
+    completedAt: "2026-04-30T00:00:06Z",
   });
 
   assert.equal(validateRunResult(blocked).ok, true);
@@ -99,6 +114,36 @@ test("CLI emits terminal RunResult JSON for dry-run RunRequest mode", async () =
 
   assert.equal(result.ok, true);
   assert.equal(result.ok && result.result.status, "succeeded");
+});
+
+test("CLI emits failed RunResult JSON for failed dry-run RunRequest mode", async () => {
+  const fixturePath = path.join(fixtureRoot, "run-request/v1/valid/github-issue-request.json");
+
+  await assert.rejects(
+    execFileAsync(process.execPath, [
+      "dist/src/cli/index.js",
+      "run-request",
+      fixturePath,
+      "--run-result",
+      "failed",
+    ]),
+    (error: unknown) => {
+      assert.ok(error && typeof error === "object");
+      assert.ok("code" in error);
+      assert.equal(error.code, 1);
+      assert.ok("stdout" in error && typeof error.stdout === "string");
+
+      const runResult = JSON.parse(error.stdout) as unknown;
+      const result = validateRunResult(runResult);
+
+      assert.equal(result.ok, true);
+      assert.equal(result.ok && result.result.status, "failed");
+      assert.equal(result.ok && result.result.verification?.status, "not_run");
+      assert.equal(result.ok && result.result.errors?.[0]?.code, "DRY_RUN_FAILED");
+
+      return true;
+    },
+  );
 });
 
 test("CLI emits blocked RunResult JSON for blocked dry-run plans", async () => {
