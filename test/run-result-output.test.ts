@@ -128,10 +128,16 @@ test("rejects non-final RunResult statuses", async () => {
 });
 
 test("rejects RunResult timestamps beyond millisecond precision", async () => {
-  const invalid = await readJson("run-result/v1/invalid/running-status.json");
-  const timestampWithMicroseconds = {
-    ...(invalid as Record<string, unknown>),
+  const readyRequest = parseRunRequest(
+    await readJson("run-request/v1/valid/github-issue-request.json"),
+  );
+  const readyPlan = createRunRequestExecutionPlan(readyRequest);
+  const valid = createRunResult(readyPlan, {
     status: "succeeded",
+    completedAt: "2026-04-30T00:00:00Z",
+  });
+  const timestampWithMicroseconds = {
+    ...valid,
     completedAt: "2026-04-30T00:00:00.123456Z",
   };
 
