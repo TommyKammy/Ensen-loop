@@ -144,6 +144,66 @@ test("rejects semantically wrong RunRequest id prefixes", async () => {
   }
 });
 
+test("rejects impossible RunRequest createdAt timestamps", async () => {
+  const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
+  const base = await readJson(fixture);
+  assertRecord(base, "fixture");
+
+  for (const createdAt of [
+    "2026-13-40T25:61:61Z",
+    "2026-04-31T00:00:00Z",
+    "2026-04-29T01:45:45.1234Z",
+  ]) {
+    const request = structuredClone(base);
+    assertRecord(request, "request");
+    request.createdAt = createdAt;
+
+    const result = validateRunRequest(request);
+
+    assert.equal(result.ok, false, `${createdAt} must be rejected`);
+    assert.ok(
+      result.issues.some((issue) => issue.path === "createdAt"),
+      `${createdAt} must include a createdAt diagnostic`,
+    );
+  }
+});
+
+test("accepts non-repository RunRequest targets with protocol prefixed ids", async () => {
+  const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
+  const base = await readJson(fixture);
+  assertRecord(base, "fixture");
+
+  const cases: readonly {
+    readonly targetType: "workspace" | "environment" | "manual";
+    readonly targetId: string;
+  }[] = [
+    {
+      targetType: "workspace",
+      targetId: "source_01HV7Y8M8F2KQ5W3P9R6T4N2WA",
+    },
+    {
+      targetType: "environment",
+      targetId: "sts_01HV7Y8M8F2KQ5W3P9R6T4N2EA",
+    },
+    {
+      targetType: "manual",
+      targetId: "req_01HV7Y8M8F2KQ5W3P9R6T4N2MA",
+    },
+  ];
+
+  for (const testCase of cases) {
+    const request = structuredClone(base);
+    assertRecord(request, "request");
+    const target = childRecord(request, "target");
+    target.targetType = testCase.targetType;
+    target.targetId = testCase.targetId;
+
+    const result = validateRunRequest(request);
+
+    assert.equal(result.ok, true, `${testCase.targetType} target must be accepted`);
+  }
+});
+
 test("rejects malformed and non-HTTPS RunRequest work item URLs", async () => {
   const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
   const base = await readJson(fixture);

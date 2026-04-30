@@ -112,10 +112,12 @@ const actorIdPattern = /^actor_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const workItemIdPattern = /^workitem_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const repositoryIdPattern = /^repo_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const policyIdPattern = /^policy_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const prefixedIdPattern =
+  /^(?:actor|artifact|corr|cr|evb|evt|flowstep|policy|pr|repo|req|run|source|sts|workitem)_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const correlationIdPattern = /^corr_[A-Za-z0-9][A-Za-z0-9._~-]{11,127}$/;
 const idempotencyKeyPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
-const sourceTypePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const isoDateTimeUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const sourceTypePattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const riskClassPattern = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
 const extensionKeyPattern = /^x-.+$/;
 
@@ -203,13 +205,7 @@ function collectRunRequestIssues(value: unknown): readonly RunRequestValidationI
   collectActorIssues(issues, value.requestedBy);
   collectWorkItemIssues(issues, value.workItem);
   collectEnumIssue(issues, "mode", value.mode, modes, "mode must be one of: plan, apply, validate.");
-  collectPatternIssue(
-    issues,
-    "createdAt",
-    value.createdAt,
-    isoDateTimeUtcPattern,
-    "createdAt must be an ISO 8601 UTC timestamp ending in Z.",
-  );
+  collectUtcTimestampIssue(issues, "createdAt", value.createdAt);
   collectTargetIssues(issues, value.target);
   collectPolicyContextIssues(issues, value.policyContext);
   collectEnumIssue(
@@ -339,13 +335,7 @@ function collectTargetIssues(
     targetTypes,
     "targetType must be one of: repository, workspace, environment, manual.",
   );
-  collectPatternIssue(
-    issues,
-    "target.targetId",
-    value.targetId,
-    repositoryIdPattern,
-    "targetId must be a valid EIP repository id.",
-  );
+  collectTargetIdIssue(issues, value.targetType, value.targetId);
   collectOptionalStringLengthIssue(issues, "target.externalRef", value.externalRef, 1, 240);
 }
 
@@ -566,6 +556,37 @@ function collectStringLengthPatternIssue(
   }
 }
 
+function collectUtcTimestampIssue(
+  issues: RunRequestValidationIssue[],
+  path: string,
+  value: unknown,
+): void {
+  if (typeof value !== "string" || !isIsoDateTimeUtc(value)) {
+    issues.push({
+      path,
+      message: `${path} must be a valid ISO 8601 UTC timestamp ending in Z.`,
+    });
+  }
+}
+
+function collectTargetIdIssue(
+  issues: RunRequestValidationIssue[],
+  targetType: unknown,
+  value: unknown,
+): void {
+  const isRepository = targetType === "repository";
+
+  collectPatternIssue(
+    issues,
+    "target.targetId",
+    value,
+    isRepository ? repositoryIdPattern : prefixedIdPattern,
+    isRepository
+      ? "targetId must be a valid EIP repository id."
+      : "targetId must be a valid EIP target id.",
+  );
+}
+
 function collectHttpsUrlIssue(
   issues: RunRequestValidationIssue[],
   path: string,
@@ -585,6 +606,30 @@ function collectHttpsUrlIssue(
       message: "url must be an HTTPS URL.",
     });
   }
+}
+
+function isIsoDateTimeUtc(value: string): boolean {
+  const match = isoDateTimeUtcPattern.exec(value);
+  if (!match) {
+    return false;
+  }
+
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) {
+    return false;
+  }
+
+  const fraction = value.match(/\.(\d+)Z$/)?.[1];
+  if (fraction !== undefined && fraction.length > 3) {
+    return false;
+  }
+
+  const normalized =
+    fraction === undefined
+      ? value.replace(/Z$/, ".000Z")
+      : value.replace(/\.(\d+)Z$/, `.${fraction.padEnd(3, "0")}Z`);
+
+  return new Date(timestamp).toISOString() === normalized;
 }
 
 function isHttpsUrl(value: string): boolean {
