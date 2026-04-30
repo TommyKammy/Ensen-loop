@@ -84,6 +84,37 @@ test("emits RunResult-compatible dry-run terminal outputs", async () => {
   ]);
 });
 
+test("clones caller-provided RunResult verification payloads", async () => {
+  const readyRequest = parseRunRequest(
+    await readJson("run-request/v1/valid/github-issue-request.json"),
+  );
+  const readyPlan = createRunRequestExecutionPlan(readyRequest);
+  const verification = {
+    status: "passed" as const,
+    summary: "initial verification summary",
+    commands: [
+      {
+        command: "npm test",
+        status: "passed" as const,
+        completedAt: "2026-04-30T00:00:04Z",
+        summary: "initial command summary",
+      },
+    ],
+  };
+
+  const result = createRunResult(readyPlan, {
+    status: "succeeded",
+    completedAt: "2026-04-30T00:00:05Z",
+    verification,
+  });
+
+  verification.summary = "mutated verification summary";
+  verification.commands[0].summary = "mutated command summary";
+
+  assert.equal(result.verification?.summary, "initial verification summary");
+  assert.equal(result.verification?.commands?.[0]?.summary, "initial command summary");
+});
+
 test("rejects non-final RunResult statuses", async () => {
   const invalid = await readJson("run-result/v1/invalid/running-status.json");
 
@@ -93,6 +124,27 @@ test("rejects non-final RunResult statuses", async () => {
   assert.ok(
     result.issues.some((issue) => issue.path === "status"),
     "RunResult status must be terminal",
+  );
+});
+
+test("rejects RunResult timestamps beyond millisecond precision", async () => {
+  const invalid = await readJson("run-result/v1/invalid/running-status.json");
+  const timestampWithMicroseconds = {
+    ...(invalid as Record<string, unknown>),
+    status: "succeeded",
+    completedAt: "2026-04-30T00:00:00.123456Z",
+  };
+
+  const result = validateRunResult(timestampWithMicroseconds);
+
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.issues.some(
+      (issue) =>
+        issue.path === "completedAt" &&
+        issue.message === "completedAt must be a UTC ISO 8601 timestamp.",
+    ),
+    "RunResult timestamps must use millisecond precision or less",
   );
 });
 

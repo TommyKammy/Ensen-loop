@@ -124,7 +124,7 @@ const prefixedIdPattern =
 const requestIdPattern = /^req_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const runIdPattern = /^run_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const correlationIdPattern = /^corr_[A-Za-z0-9][A-Za-z0-9._~-]{11,127}$/;
-const isoDateTimeUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const isoDateTimeUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 const codePattern = /^[A-Z][A-Z0-9_]{2,63}$/;
 const extensionKeyPattern = /^x-.+$/;
@@ -164,7 +164,10 @@ export function createRunResult(
     correlationId: plan.provenance.correlationId,
     status: options.status,
     completedAt: options.completedAt,
-    verification: options.verification ?? createDryRunVerification(plan, options.status),
+    verification:
+      options.verification === undefined
+        ? createDryRunVerification(plan, options.status)
+        : cloneVerification(options.verification),
     metrics: {
       attempts: 1,
     },
@@ -268,6 +271,17 @@ function createDryRunVerification(
       `Dry-run request blocked: ${plan.blockedReasons.join("; ")}`,
       1000,
     ),
+  };
+}
+
+function cloneVerification(verification: VerificationSummary): VerificationSummary {
+  return {
+    ...verification,
+    ...(verification.commands === undefined
+      ? {}
+      : {
+          commands: verification.commands.map((command) => ({ ...command })),
+        }),
   };
 }
 
