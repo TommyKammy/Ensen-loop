@@ -63,6 +63,8 @@ const credentialUriAuthorityPattern =
   /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#\s]*[^/?#\s:@]+:[^/?#\s:@]+@/;
 const localPathPattern = /^(?![A-Za-z][A-Za-z0-9+.-]*:\/\/)(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._~@/-]+$/;
 const fileUriPattern = /^file:\/\/\/(?!.*(?:^|\/)\.\.(?:\/|$))[^\s?#]+$/;
+const fileUriIssueMessage =
+  "file_uri uri must be an absolute file URI without traversal, query, or fragment.";
 const evidenceBundleRefTypes = new Set<unknown>(["local_path", "file_uri"]);
 
 export function validateEvidenceBundleRef(value: unknown): EvidenceBundleRefValidationResult {
@@ -155,10 +157,77 @@ function collectUriIssues(
     });
   }
 
-  if (type === "file_uri" && !fileUriPattern.test(value)) {
+  if (type === "file_uri") {
+    collectFileUriIssues(issues, value);
+  }
+}
+
+function collectFileUriIssues(
+  issues: EvidenceBundleRefValidationIssue[],
+  value: string,
+): void {
+  if (!fileUriPattern.test(value)) {
     issues.push({
       path: "uri",
-      message: "file_uri uri must be an absolute file URI without traversal, query, or fragment.",
+      message: fileUriIssueMessage,
+    });
+    return;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    issues.push({
+      path: "uri",
+      message: "file_uri uri must be a valid absolute file URI.",
+    });
+    return;
+  }
+
+  const rawPath = value.slice("file://".length);
+  if (
+    parsed.protocol !== "file:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    rawPath.startsWith("//")
+  ) {
+    issues.push({
+      path: "uri",
+      message: fileUriIssueMessage,
+    });
+    return;
+  }
+
+  let decodedSegments: string[];
+  try {
+    decodedSegments = rawPath
+      .split("/")
+      .filter((segment) => segment.length > 0)
+      .map((segment) => decodeURIComponent(segment));
+  } catch {
+    issues.push({
+      path: "uri",
+      message: fileUriIssueMessage,
+    });
+    return;
+  }
+
+  if (
+    decodedSegments.some(
+      (segment) =>
+        segment === "." ||
+        segment === ".." ||
+        segment.includes("/") ||
+        segment.includes("\\") ||
+        /[\s\u0000-\u001f\u007f]/.test(segment),
+    )
+  ) {
+    issues.push({
+      path: "uri",
+      message: fileUriIssueMessage,
     });
   }
 }
@@ -224,8 +293,8 @@ function collectMetadataIssues(
 
     if (
       metadataValue !== null &&
-      typeof metadataValue !== "number" &&
       typeof metadataValue !== "boolean" &&
+      !(typeof metadataValue === "number" && Number.isFinite(metadataValue)) &&
       !(
         typeof metadataValue === "string" &&
         metadataValue.length >= 1 &&

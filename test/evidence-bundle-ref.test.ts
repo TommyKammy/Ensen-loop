@@ -51,8 +51,40 @@ test("rejects unsafe EvidenceBundleRef paths and secret-bearing URI shapes", asy
       schemaVersion: "eip.evidence-bundle-ref.v1",
       id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
       correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
+      type: "local_path",
+      uri: "evidence\\bundle.json",
+      createdAt: "2026-04-29T00:10:00Z",
+    },
+    {
+      schemaVersion: "eip.evidence-bundle-ref.v1",
+      id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
+      correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
       type: "file_uri",
       uri: "file:///evidence.example.test/bundle.json?token=REDACTED_FIXTURE_SECRET_PLACEHOLDER",
+      createdAt: "2026-04-29T00:10:00Z",
+    },
+    {
+      schemaVersion: "eip.evidence-bundle-ref.v1",
+      id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
+      correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
+      type: "file_uri",
+      uri: "file://user:REDACTED_FIXTURE_SECRET_PLACEHOLDER@localhost/evidence/bundle.json",
+      createdAt: "2026-04-29T00:10:00Z",
+    },
+    {
+      schemaVersion: "eip.evidence-bundle-ref.v1",
+      id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
+      correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
+      type: "file_uri",
+      uri: "file:///evidence/%2e%2e/bundle.json",
+      createdAt: "2026-04-29T00:10:00Z",
+    },
+    {
+      schemaVersion: "eip.evidence-bundle-ref.v1",
+      id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
+      correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
+      type: "file_uri",
+      uri: "file:///evidence%5Cbundle.json",
       createdAt: "2026-04-29T00:10:00Z",
     },
   ];
@@ -66,6 +98,24 @@ test("rejects unsafe EvidenceBundleRef paths and secret-bearing URI shapes", asy
   const invalidFixture = validateEvidenceBundleRef(await readJson("invalid/raw-secret-uri.json"));
 
   assert.equal(invalidFixture.ok, false, "invalid copied fixture must fail validation");
+});
+
+test("rejects non-finite EvidenceBundleRef metadata numbers", () => {
+  for (const metadataValue of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+    const result = validateEvidenceBundleRef({
+      schemaVersion: "eip.evidence-bundle-ref.v1",
+      id: "evb_01HV9ZX8J2K6T3QW4R5Y7M8N9U",
+      correlationId: "corr_01HV9ZX8J2K6T3QW4R5Y7M8N9R",
+      type: "local_path",
+      uri: "evidence/bundle.json",
+      createdAt: "2026-04-29T00:10:00Z",
+      metadata: {
+        attemptCount: metadataValue,
+      },
+    });
+
+    assert.equal(result.ok, false, `${metadataValue} must fail validation`);
+  }
 });
 
 test("dry-run sample exposes validation-ready EvidenceBundleRef references", () => {
