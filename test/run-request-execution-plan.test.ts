@@ -128,6 +128,7 @@ test("maps an issue-like RunRequest into a bounded execution plan", async () => 
     evidence: {
       intent: "normalize evidence intent without writing durable evidence",
       writesDurableEvidence: false,
+      bundleRefs: [],
     },
   });
 });

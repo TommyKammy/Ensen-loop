@@ -19,6 +19,7 @@ The Ensen-loop quality kit is the repo-owned vocabulary for keeping AI-assisted 
 | Lane journal | The short-horizon handoff record for active work. | Current hypothesis, changed files, focused commands, failures, rollback concerns, and next action are recorded. |
 | Verification gate | The repo-owned commands that prove the work locally. | For this baseline, `npm run typecheck`, `npm run build`, and `npm test` are the required checks after `npm ci` has installed dependencies. |
 | Evidence bundle | The collected facts that justify publication or repair. | Issue scope, branch/head state, changed files, test output, review facts, and PR state are linked without relying on chat memory. |
+| EvidenceBundleRef | Validation-ready metadata that points at an evidence bundle location. | The reference must be path-safe and secret-safe; it does not embed the bundle body and does not by itself make a compliance claim. |
 | Reviewability | The ability for humans and tools to inspect the change safely. | The PR or handoff names the behavior delta, verification performed, unresolved risks, and review signal state. |
 | Lane introspection | Operator-facing status and explanation surfaces. | Summaries must be derived from authoritative lane state rather than stale display text. |
 
@@ -35,7 +36,9 @@ Ensen-loop keeps the quality goals, not the old implementation shape:
 
 ## Phase 1 Boundary
 
-This document does not define EIP RunRequest or RunResult. It also does not make codex-supervisor a package dependency. Future phases may turn these concepts into schemas, commands, or runtime enforcement, but those contracts must be Ensen-loop-native and explicitly documented before implementation work depends on them.
+This document does not make codex-supervisor a package dependency. Protocol contract work must stay Ensen-loop-native and explicitly documented before runtime behavior depends on it.
+
+EvidenceBundleRef v1 handling is limited to the reference boundary. Ensen-loop can validate copied protocol fixtures and expose dry-run reference examples, but the sample does not write a durable bundle, package evidence, or assert compliance readiness. Safe references use repo-relative traversal-free local paths or absolute `file:///` URIs without query strings, fragments, credentials, or raw secret material.
 
 ## Baseline Verification
 

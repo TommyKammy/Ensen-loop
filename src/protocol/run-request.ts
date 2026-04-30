@@ -117,6 +117,7 @@ export interface RunRequestExecutionPlan {
   readonly evidence: {
     readonly intent: string;
     readonly writesDurableEvidence: false;
+    readonly bundleRefs: readonly [];
   };
 }
 
@@ -277,6 +278,7 @@ export function createRunRequestExecutionPlan(request: RunRequest): RunRequestEx
     evidence: {
       intent: "normalize evidence intent without writing durable evidence",
       writesDurableEvidence: false,
+      bundleRefs: [],
     },
   };
 }

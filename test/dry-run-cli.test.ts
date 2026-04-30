@@ -43,6 +43,7 @@ test("dry-run sample emits a normalized execution plan", async () => {
     evidence: {
       intent: string;
       writesDurableEvidence: boolean;
+      bundleRefs: readonly unknown[];
     };
   };
 
@@ -72,7 +73,24 @@ test("dry-run sample emits a normalized execution plan", async () => {
     commands: ["npm run build", "npm test"],
   });
   assert.deepEqual(plan.evidence, {
-    intent: "describe evidence capture without writing durable evidence",
+    intent:
+      "describe validation-ready evidence metadata without writing a full evidence bundle artifact",
     writesDurableEvidence: false,
+    bundleRefs: [
+      {
+        schemaVersion: "eip.evidence-bundle-ref.v1",
+        id: "evb_sampleDryRunEvidenceRef01",
+        correlationId: "corr_sampleDryRunEvidenceRef01",
+        type: "local_path",
+        uri: "artifacts/evidence/dry-run/sample-bundle.json",
+        createdAt: "2026-04-29T00:00:00Z",
+        contentType: "application/json",
+        metadata: {
+          producer: "ensen-loop",
+          artifactKind: "validationReadyEvidenceMetadata",
+          writesDurableEvidence: false,
+        },
+      },
+    ],
   });
 });
