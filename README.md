@@ -21,10 +21,13 @@ npm ci
 npm run typecheck
 npm run build
 npm test
+node --test dist/test/eip-conformance-fixtures.test.js
 node dist/src/cli/index.js dry-run --sample
 node dist/src/cli/index.js run-request <run-request-json-file>
 node dist/src/cli/index.js run-request <run-request-json-file> --status-snapshot queued
 ```
+
+`npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.1.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures.
 
 `dry-run --sample` emits a deterministic local execution plan as JSON. It describes the work item, lane workspace, agent provider, SCM provider, verification, and evidence intents without creating worktrees, branches, commits, change requests, durable evidence, or invoking external providers. Its evidence section may include EvidenceBundleRef v1-compatible references as validation-ready metadata. These references identify where evidence could be found; they are not full evidence bundle artifacts and do not claim durable compliance packaging.
 
