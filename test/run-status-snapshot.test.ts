@@ -60,6 +60,36 @@ test("emits RunStatusSnapshot-compatible dry-run lifecycle states", async () => 
   });
 });
 
+test("rejects crossed ID prefixes in RunStatusSnapshot payloads", async () => {
+  const request = parseRunRequest(await readJson("run-request/v1/valid/github-issue-request.json"));
+  const plan = createRunRequestExecutionPlan(request);
+  const snapshot = createRunStatusSnapshot(plan, {
+    status: "queued",
+    observedAt: "2026-04-30T00:00:01Z",
+  });
+
+  const result = validateRunStatusSnapshot({
+    ...snapshot,
+    id: snapshot.runId,
+    requestId: snapshot.runId,
+    runId: snapshot.id,
+  });
+
+  assert.equal(result.ok, false);
+  assert.ok(
+    result.issues.some((issue) => issue.path === "id"),
+    "status id must require an sts_ prefix",
+  );
+  assert.ok(
+    result.issues.some((issue) => issue.path === "requestId"),
+    "request id must require a req_ prefix",
+  );
+  assert.ok(
+    result.issues.some((issue) => issue.path === "runId"),
+    "run id must require a run_ prefix",
+  );
+});
+
 test("includes blocked dry-run reasons without final-result-only fields", async () => {
   const request = parseRunRequest(await readJson("run-request/v1/valid/manual-request.json"));
   const plan = createRunRequestExecutionPlan(request);

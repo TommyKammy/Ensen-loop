@@ -63,8 +63,9 @@ const snapshotKeys = new Set([
   "extensions",
 ]);
 const progressKeys = new Set(["current", "total", "percent", "unit"]);
-const prefixedIdPattern =
-  /^(?:actor|artifact|corr|cr|evb|evt|flowstep|policy|pr|repo|req|run|source|sts|workitem)_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const statusIdPattern = /^sts_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const requestIdPattern = /^req_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
+const runIdPattern = /^run_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/;
 const correlationIdPattern = /^corr_[A-Za-z0-9][A-Za-z0-9._~-]{11,127}$/;
 const isoDateTimeUtcPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
 const extensionKeyPattern = /^x-.+$/;
@@ -145,7 +146,7 @@ export function createBlockedRunStatusSnapshotFromValidationIssues(
 
   if (
     typeof value.id !== "string" ||
-    !/^req_[A-Za-z0-9][A-Za-z0-9._~-]{5,127}$/.test(value.id) ||
+    !requestIdPattern.test(value.id) ||
     typeof value.correlationId !== "string" ||
     !correlationIdPattern.test(value.correlationId)
   ) {
@@ -234,12 +235,12 @@ function collectRunStatusSnapshotIssues(
   const issues: RunRequestValidationIssue[] = [];
   collectUnknownKeyIssues(issues, value, snapshotKeys, "$");
   collectConstIssue(issues, "schemaVersion", value.schemaVersion, "eip.run-status.v1");
-  collectPatternIssue(issues, "id", value.id, prefixedIdPattern, "id must be a valid EIP status id.");
+  collectPatternIssue(issues, "id", value.id, statusIdPattern, "id must be a valid EIP status id.");
   collectPatternIssue(
     issues,
     "requestId",
     value.requestId,
-    prefixedIdPattern,
+    requestIdPattern,
     "requestId must be a valid EIP request id.",
   );
   collectPatternIssue(
@@ -253,7 +254,7 @@ function collectRunStatusSnapshotIssues(
     issues,
     "runId",
     value.runId,
-    prefixedIdPattern,
+    runIdPattern,
     "runId must be a valid EIP run id.",
     true,
   );
