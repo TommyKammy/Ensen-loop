@@ -110,6 +110,6 @@ test("documents the Phase 3 local lane execution contract", async () => {
   assert.match(readme, /docs\/architecture\/local-lane-execution\.md/);
   assert.doesNotMatch(
     contract,
-    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|C:\\Users\\|~\//,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
   );
 });
