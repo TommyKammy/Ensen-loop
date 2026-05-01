@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -371,6 +372,60 @@ test("fails closed when prepared lane context is missing or unprepared", async (
     assert.equal(invokedWithoutMarker, false);
     assert.equal(unmarked.status, "blocked");
     assert.match(unmarked.blockedReasons.join("\n"), /marker must exist/);
+
+    if (typeof constants.O_NOFOLLOW === "number") {
+      const symlinkWorkspacePath = await mkdtemp(path.join(workspaceRoot, "symlink-workspace-"));
+      const symlinkStatePath = await mkdtemp(path.join(stateRoot, "symlink-state-"));
+      const workspaceMarkerTarget = path.join(symlinkWorkspacePath, "marker-target.json");
+      let invokedWithSymlinkMarker = false;
+
+      await writeFile(
+        workspaceMarkerTarget,
+        `${JSON.stringify({
+          schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+          laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+        })}\n`,
+        "utf8",
+      );
+      await symlink(
+        workspaceMarkerTarget,
+        path.join(symlinkWorkspacePath, preparedLocalLaneMarkerFilename),
+      );
+      await writeFile(
+        path.join(symlinkStatePath, preparedLocalLaneMarkerFilename),
+        `${JSON.stringify({
+          schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+          laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+        })}\n`,
+        "utf8",
+      );
+
+      const symlinkMarker = await invokeLaneExecutor({
+        executor: {
+          id: "deterministic-local-fake",
+          async invoke() {
+            invokedWithSymlinkMarker = true;
+            throw new Error("unexpected invocation");
+          },
+        },
+        mode: "deterministic-local-fake",
+        plan: createRunRequestExecutionPlan(request),
+        preparedContext: {
+          laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+          workspacePath: symlinkWorkspacePath,
+          statePath: symlinkStatePath,
+        },
+        completedAt: "2026-05-01T00:00:16Z",
+        fixture: {
+          name: "issue-40-symlink-marker",
+          outcome: "succeeded",
+        },
+      });
+
+      assert.equal(invokedWithSymlinkMarker, false);
+      assert.equal(symlinkMarker.status, "blocked");
+      assert.match(symlinkMarker.blockedReasons.join("\n"), /workspace marker must not be a symbolic link/);
+    }
 
     await writeFile(
       path.join(unmarkedWorkspacePath, preparedLocalLaneMarkerFilename),

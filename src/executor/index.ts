@@ -1,4 +1,5 @@
-import { lstat, readFile } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, open } from "node:fs/promises";
 import path from "node:path";
 
 import type {
@@ -213,33 +214,38 @@ async function collectPreparedMarkerIssues(
     directoryKind === "workspace" ? preparedContext.workspacePath : preparedContext.statePath,
     preparedLocalLaneMarkerFilename,
   );
-  const markerStats = await lstat(markerPath).catch((error: unknown) => {
+  const markerFile = await open(markerPath, constants.O_RDONLY | noFollowFlag()).catch((error: unknown) => {
     issues.push(
       isNodeError(error) && error.code === "ENOENT"
         ? `Prepared lane ${directoryKind} marker must exist before executor invocation.`
-        : `Prepared lane ${directoryKind} marker is not accessible before executor invocation.`,
+        : isNodeError(error) && error.code === "ELOOP"
+          ? `Prepared lane ${directoryKind} marker must not be a symbolic link.`
+          : `Prepared lane ${directoryKind} marker is not accessible before executor invocation.`,
     );
     return undefined;
   });
 
-  if (markerStats?.isSymbolicLink()) {
-    issues.push(`Prepared lane ${directoryKind} marker must not be a symbolic link.`);
+  if (!markerFile) {
     return issues;
   }
 
-  if (markerStats && !markerStats.isFile()) {
-    issues.push(`Prepared lane ${directoryKind} marker must be a regular file.`);
-    return issues;
-  }
+  let rawMarker: string | undefined;
 
-  if (!markerStats) {
-    return issues;
-  }
+  try {
+    const markerStats = await markerFile.stat();
 
-  const rawMarker = await readFile(markerPath, "utf8").catch(() => {
-    issues.push(`Prepared lane ${directoryKind} marker is not readable before executor invocation.`);
-    return undefined;
-  });
+    if (!markerStats.isFile()) {
+      issues.push(`Prepared lane ${directoryKind} marker must be a regular file.`);
+      return issues;
+    }
+
+    rawMarker = await markerFile.readFile("utf8").catch(() => {
+      issues.push(`Prepared lane ${directoryKind} marker is not readable before executor invocation.`);
+      return undefined;
+    });
+  } finally {
+    await markerFile.close();
+  }
 
   if (rawMarker === undefined) {
     return issues;
@@ -406,6 +412,10 @@ function replaceProtocolIdPrefix(value: string, prefix: string): string {
   }
 
   return `${prefix}_${value.slice(separatorIndex + 1)}`;
+}
+
+function noFollowFlag(): number {
+  return typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
 }
 
 function isPreparedMarkerForLane(value: unknown, laneRunId: string): boolean {
