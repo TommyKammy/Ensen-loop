@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 
@@ -66,7 +66,25 @@ export interface CreateLaneRunStateInput {
   readonly evidence?: LaneEvidenceRefs;
 }
 
+export interface PrepareLocalLaneWorkspaceInput {
+  readonly workspaceRoot: string;
+  readonly stateRoot: string;
+  readonly laneRunId?: string;
+  readonly workItemId?: string;
+}
+
+export interface PreparedLocalLaneWorkspace {
+  readonly directoryName: string;
+  readonly workspacePath: string;
+  readonly statePath: string;
+  readonly created: {
+    readonly workspace: boolean;
+    readonly state: boolean;
+  };
+}
+
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
 const isoDateTimePattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const laneRunStatuses = new Set<unknown>([
@@ -100,6 +118,61 @@ export function createLaneRunState(input: CreateLaneRunStateInput): LaneRunState
     audit: input.audit ?? { eventRefs: [] },
     evidence: input.evidence ?? { bundleRefs: [] },
   };
+}
+
+export function resolveLocalLaneDirectoryName(
+  input: Pick<PrepareLocalLaneWorkspaceInput, "laneRunId" | "workItemId">,
+): string {
+  const identifier = input.laneRunId ?? input.workItemId;
+
+  if (typeof identifier !== "string" || identifier.length === 0) {
+    throw new Error("A lane run identifier or work item identifier is required for local lane preparation.");
+  }
+
+  if (!localLaneDirectoryNamePattern.test(identifier)) {
+    throw new Error("Local lane identifiers may only contain letters, numbers, dots, underscores, and hyphens.");
+  }
+
+  if (!/[A-Za-z0-9]/.test(identifier)) {
+    throw new Error("Local lane identifiers must include at least one letter or number.");
+  }
+
+  return identifier;
+}
+
+export async function prepareLocalLaneWorkspace(
+  input: PrepareLocalLaneWorkspaceInput,
+): Promise<PreparedLocalLaneWorkspace> {
+  const directoryName = resolveLocalLaneDirectoryName(input);
+  const workspaceRoot = await resolveCanonicalLocalLaneRoot("workspace", input.workspaceRoot);
+  const stateRoot = await resolveCanonicalLocalLaneRoot("state", input.stateRoot);
+
+  if (workspaceRoot.realPath === stateRoot.realPath) {
+    throw new Error("Local lane workspace root and state root must be separate directories.");
+  }
+
+  let workspaceResult: PreparedLocalLanePath | undefined;
+
+  try {
+    workspaceResult = await prepareLocalLanePath("workspace", workspaceRoot, directoryName);
+    const stateResult = await prepareLocalLanePath("state", stateRoot, directoryName);
+
+    return {
+      directoryName,
+      workspacePath: workspaceResult.path,
+      statePath: stateResult.path,
+      created: {
+        workspace: workspaceResult.created,
+        state: stateResult.created,
+      },
+    };
+  } catch (error) {
+    if (workspaceResult?.created) {
+      await rm(workspaceResult.path, { recursive: true, force: true });
+    }
+
+    throw error;
+  }
 }
 
 export function serializeLaneRunState(state: LaneRunState): string {
@@ -221,6 +294,126 @@ async function resolveCanonicalStateRoot(stateRoot: string): Promise<string> {
   }
 
   return realpath(resolvedRoot);
+}
+
+interface PreparedLocalLanePath {
+  readonly path: string;
+  readonly created: boolean;
+}
+
+interface CanonicalLocalLaneRoot {
+  readonly inputPath: string;
+  readonly realPath: string;
+}
+
+async function resolveCanonicalLocalLaneRoot(
+  kind: "workspace" | "state",
+  rootPath: string,
+): Promise<CanonicalLocalLaneRoot> {
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error(`Local lane ${kind} root must be an absolute path.`);
+  }
+
+  const stats = await lstat(rootPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      throw new Error(`Local lane ${kind} root must exist before preparation.`);
+    }
+
+    throw error;
+  });
+
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error(`Local lane ${kind} root must be a real directory.`);
+  }
+
+  return {
+    inputPath: path.resolve(rootPath),
+    realPath: await realpath(rootPath),
+  };
+}
+
+async function prepareLocalLanePath(
+  kind: "workspace" | "state",
+  root: CanonicalLocalLaneRoot,
+  directoryName: string,
+): Promise<PreparedLocalLanePath> {
+  const laneRunsRoot = path.join(root.inputPath, "lane-runs");
+  await ensureLocalLaneDirectory(kind, root, laneRunsRoot);
+
+  const lanePath = path.join(laneRunsRoot, directoryName);
+  const existingStats = await lstat(lanePath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+  let created = false;
+
+  if (!existingStats) {
+    await mkdir(lanePath);
+    created = true;
+  } else if (existingStats.isSymbolicLink()) {
+    throw new Error(`Local lane ${kind} path must not traverse symbolic links.`);
+  } else if (!existingStats.isDirectory()) {
+    throw new Error(`Local lane ${kind} path must be a real directory.`);
+  }
+
+  await assertLocalLanePathInsideRoot(kind, root, lanePath);
+
+  return {
+    path: lanePath,
+    created,
+  };
+}
+
+async function ensureLocalLaneDirectory(
+  kind: "workspace" | "state",
+  root: CanonicalLocalLaneRoot,
+  directoryPath: string,
+): Promise<void> {
+  const stats = await lstat(directoryPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!stats) {
+    await mkdir(directoryPath);
+    await assertLocalLanePathInsideRoot(kind, root, directoryPath);
+    return;
+  }
+
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Local lane ${kind} path must not traverse symbolic links.`);
+  }
+
+  if (!stats.isDirectory()) {
+    throw new Error(`Local lane ${kind} path must be a real directory.`);
+  }
+
+  await assertLocalLanePathInsideRoot(kind, root, directoryPath);
+}
+
+async function assertLocalLanePathInsideRoot(
+  kind: "workspace" | "state",
+  root: CanonicalLocalLaneRoot,
+  candidatePath: string,
+): Promise<void> {
+  const stats = await lstat(candidatePath);
+
+  if (stats.isSymbolicLink()) {
+    throw new Error(`Local lane ${kind} path must not traverse symbolic links.`);
+  }
+
+  const realCandidate = await realpath(candidatePath);
+  const relativePath = path.relative(root.realPath, realCandidate);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error(`Local lane ${kind} path must stay inside the configured root.`);
+  }
 }
 
 async function assertExistingPathSafe(
