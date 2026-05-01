@@ -10,6 +10,8 @@ The Phase 1 module boundaries and vocabulary are defined in [docs/architecture/c
 
 The Phase 3 bounded local lane execution contract is defined in [docs/architecture/local-lane-execution.md](docs/architecture/local-lane-execution.md).
 
+The X-Gate 3 local fake lane smoke command is documented in [docs/runbooks/x-gate3-local-lane-smoke.md](docs/runbooks/x-gate3-local-lane-smoke.md).
+
 The Ensen-loop mission and development charter alignment are summarized in [docs/mission.md](docs/mission.md).
 
 The Phase 1 local Work Item validation skeleton is documented in [docs/reference/work-item-contract.md](docs/reference/work-item-contract.md).
@@ -28,6 +30,7 @@ node dist/src/cli/index.js dry-run --sample
 node dist/src/cli/index.js run-request <run-request-json-file>
 node dist/src/cli/index.js run-request <run-request-json-file> --status-snapshot queued
 node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
+node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>
 ```
 
 `npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.1.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures.
@@ -39,6 +42,8 @@ node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
 `run-request <run-request-json-file> --status-snapshot accepted|queued|running|blocked` emits a RunStatusSnapshot-compatible dry-run polling snapshot for the request. The mode maps only Ensen-loop dry-run lifecycle facts; it does not read Ensen-flow workflow state, approval state, or final RunResult fields. If validation or plan normalization blocks the dry run and valid request/correlation identifiers are available, the command emits a blocked status snapshot with actionable reasons under `extensions.x-ensen-loop-blocked-reasons`.
 
 `x-gate2-smoke <run-request-json-file>` emits the X-Gate 2 narrow loop-flow dry-run smoke payload to stdout. The JSON payload always contains deterministic `statusSnapshot` and `runResult` fields when stable request and correlation identifiers are available. Plannable smoke requests also include an `evidenceBundleRef`; blocked dry-runs omit that field. The EvidenceBundleRef uses a relative local artifact URI under `artifacts/evidence/x-gate2/<request-id>.json`; the command describes that artifact location but does not create or write the artifact. The smoke path does not create a repository, branch, worktree, GitHub issue, pull request, Codex session, durable evidence bundle, or provider call. Invalid RunRequest input and unsupported EIP major versions fail closed with blocked status/result output when stable request and correlation identifiers are available.
+
+`x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>` runs the bounded Phase 3 local fake lane smoke path. It validates the RunRequest, prepares local lane workspace/state directories, invokes the deterministic local fake executor, persists LaneRunState plus local evidence metadata, and emits one aggregate JSON object with RunStatusSnapshot and RunResult projections. It does not create or mutate GitHub issues, branches, pull requests, reviews, commits, real agent-provider sessions, or production evidence archives. Invalid input, unsupported EIP major versions, unsafe roots, failed fake outcomes, and blocked fake outcomes fail closed with parseable JSON output.
 
 EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.1.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
 
