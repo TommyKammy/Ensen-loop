@@ -8,19 +8,28 @@ import {
   type AgentProvider,
   type ScmProvider,
 } from "../src/core/index.js";
+import { createSampleDryRunExecutionPlan } from "../src/lane/index.js";
+import {
+  createRunRequestExecutionPlan,
+  parseRunRequest,
+} from "../src/protocol/index.js";
+
+const expectedScmProviderCapabilities = [
+  "work-item-pickup",
+  "lane-branch-intent",
+  "lane-worktree-intent",
+  "change-request-intent",
+  "status-reporting",
+] as const;
+
+const expectedAgentProviderCapabilities = [
+  "dry-run-intent",
+  "execute-intent",
+] as const;
 
 test("defines provider-neutral SCM and agent capability vocabulary", () => {
-  assert.deepEqual(SCM_PROVIDER_CAPABILITIES, [
-    "work-item-pickup",
-    "lane-branch-intent",
-    "lane-worktree-intent",
-    "change-request-intent",
-    "status-reporting",
-  ]);
-  assert.deepEqual(AGENT_PROVIDER_CAPABILITIES, [
-    "dry-run-intent",
-    "execute-intent",
-  ]);
+  assert.deepEqual(SCM_PROVIDER_CAPABILITIES, expectedScmProviderCapabilities);
+  assert.deepEqual(AGENT_PROVIDER_CAPABILITIES, expectedAgentProviderCapabilities);
 
   const scmProvider: ScmProvider = {
     id: "initial-scm-adapter",
@@ -36,6 +45,47 @@ test("defines provider-neutral SCM and agent capability vocabulary", () => {
   assert.equal(scmProvider.capabilities.includes("status-reporting"), true);
   assert.equal(agentProvider.capabilities.includes("execute-intent"), true);
   assert.doesNotMatch(JSON.stringify({ scmProvider, agentProvider }), /\b(GitHub|Codex|gh)\b/i);
+});
+
+test("keeps lane and run-request capability output stable after attempted vocabulary mutation", async () => {
+  const request = parseRunRequest(
+    JSON.parse(
+      await readFile(
+        "protocol-snapshots/ensen-protocol/v0.1.0/fixtures/run-request/v1/valid/github-issue-request.json",
+        "utf8",
+      ),
+    ) as unknown,
+  );
+  const mutableScmCapabilities = SCM_PROVIDER_CAPABILITIES as unknown as string[];
+  const mutableAgentCapabilities = AGENT_PROVIDER_CAPABILITIES as unknown as string[];
+
+  try {
+    try {
+      mutableScmCapabilities.push("runtime-mutated-scm-capability");
+    } catch (error) {
+      assert.ok(error instanceof TypeError);
+    }
+    try {
+      mutableAgentCapabilities.push("runtime-mutated-agent-capability");
+    } catch (error) {
+      assert.ok(error instanceof TypeError);
+    }
+
+    const dryRunPlan = createSampleDryRunExecutionPlan();
+    const runRequestPlan = createRunRequestExecutionPlan(request);
+
+    assert.deepEqual(dryRunPlan.scmProvider.capabilities, expectedScmProviderCapabilities);
+    assert.deepEqual(dryRunPlan.agentProvider.capabilities, expectedAgentProviderCapabilities);
+    assert.deepEqual(runRequestPlan.scmProvider.capabilities, expectedScmProviderCapabilities);
+    assert.deepEqual(runRequestPlan.agentProvider.capabilities, expectedAgentProviderCapabilities);
+  } finally {
+    if (mutableScmCapabilities.length > expectedScmProviderCapabilities.length) {
+      mutableScmCapabilities.splice(expectedScmProviderCapabilities.length);
+    }
+    if (mutableAgentCapabilities.length > expectedAgentProviderCapabilities.length) {
+      mutableAgentCapabilities.splice(expectedAgentProviderCapabilities.length);
+    }
+  }
 });
 
 test("documents Phase 4 provider boundaries without making initial adapters core concepts", async () => {
