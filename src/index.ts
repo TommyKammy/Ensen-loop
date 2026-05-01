@@ -17,6 +17,7 @@ export function describeProduct(): string {
 }
 
 export * from "./core/index.js";
+export * from "./executor/index.js";
 export * from "./lane/index.js";
 export * from "./protocol/index.js";
 export * from "./work-item/index.js";
