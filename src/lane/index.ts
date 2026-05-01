@@ -5,7 +5,11 @@ import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 
 import type { LaneAuditRefs } from "../audit/index.js";
-import type { WorkItem } from "../core/index.js";
+import {
+  AGENT_PROVIDER_CAPABILITIES,
+  SCM_PROVIDER_CAPABILITIES,
+  type WorkItem,
+} from "../core/index.js";
 import type { LaneEvidenceRefs } from "../evidence/index.js";
 import type { EvidenceBundleRef } from "../protocol/index.js";
 import { sampleLocalWorkItem } from "../work-item/index.js";
@@ -713,10 +717,12 @@ export interface DryRunExecutionPlan {
   };
   readonly agentProvider: {
     readonly intent: string;
+    readonly capabilities: typeof AGENT_PROVIDER_CAPABILITIES;
     readonly invokesProvider: false;
   };
   readonly scmProvider: {
     readonly intent: string;
+    readonly capabilities: typeof SCM_PROVIDER_CAPABILITIES;
     readonly createsBranch: false;
     readonly opensChangeRequest: false;
   };
@@ -742,10 +748,12 @@ export function createSampleDryRunExecutionPlan(): DryRunExecutionPlan {
     },
     agentProvider: {
       intent: "describe agent selection without invoking an agent provider",
+      capabilities: AGENT_PROVIDER_CAPABILITIES,
       invokesProvider: false,
     },
     scmProvider: {
       intent: "describe SCM actions without creating branches, commits, or change requests",
+      capabilities: SCM_PROVIDER_CAPABILITIES,
       createsBranch: false,
       opensChangeRequest: false,
     },
