@@ -156,7 +156,7 @@ test("fails closed for unsupported executor modes before invoking an adapter", a
           throw new Error("unexpected invocation");
         },
       },
-      mode: "remote-provider",
+      mode: "remote-provider token=raw-test-token",
       plan: createRunRequestExecutionPlan(request),
       preparedContext,
       completedAt: "2026-05-01T00:00:04Z",
@@ -168,7 +168,8 @@ test("fails closed for unsupported executor modes before invoking an adapter", a
 
     assert.equal(invoked, false);
     assert.equal(result.status, "blocked");
-    assert.match(result.blockedReasons.join("\n"), /Unsupported executor mode/);
+    assert.deepEqual(result.blockedReasons, ["Unsupported executor configuration."]);
+    assert.doesNotMatch(JSON.stringify(result), /raw-test-token/);
   });
 });
 
@@ -329,6 +330,27 @@ test("fails closed when prepared lane context is missing or unprepared", async (
 
     assert.equal(inaccessible.status, "blocked");
     assert.match(inaccessible.blockedReasons.join("\n"), /workspace path is not accessible/);
+
+    const invalidLaneRunId = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext: {
+        laneRunId: "token=raw-test-token",
+        workspacePath: stateRoot,
+        statePath: stateRoot,
+      },
+      completedAt: "2026-05-01T00:00:12Z",
+      fixture: {
+        name: "issue-40-invalid-lane-id",
+        outcome: "succeeded",
+      },
+    });
+
+    assert.equal(invalidLaneRunId.status, "blocked");
+    assert.match(invalidLaneRunId.blockedReasons.join("\n"), /invalid lane run identifier/);
+    assert.equal(invalidLaneRunId.invocation.laneRunId, "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA");
+    assert.doesNotMatch(JSON.stringify(invalidLaneRunId), /raw-test-token/);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }

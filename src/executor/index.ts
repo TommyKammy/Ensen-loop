@@ -75,6 +75,7 @@ const credentialPattern =
 const unsafeLocalPathPattern =
   /(?:^|[\s"'([{<>=])(?:\/(?:[^\s"'`<>]*)?|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:\\[^\s"'`<>]+|\\\\[^\\\s]+\\[^\\\s]+)/i;
 const redactedFixtureName = "[REDACTED_FIXTURE]";
+const unsupportedExecutorConfigurationReason = "Unsupported executor configuration.";
 
 export function createDeterministicLocalFakeExecutor(): LaneExecutorAdapter {
   return {
@@ -121,7 +122,7 @@ export async function invokeLaneExecutor(input: InvokeLaneExecutorInput): Promis
 
   if (input.mode !== deterministicLocalFakeMode || input.executor.id !== deterministicLocalFakeMode) {
     return createBlockedResultWithoutAdapter(input, [
-      `Unsupported executor mode: ${input.mode}`,
+      unsupportedExecutorConfigurationReason,
     ]);
   }
 
@@ -133,7 +134,11 @@ export async function invokeLaneExecutor(input: InvokeLaneExecutorInput): Promis
 
   const contextIssues = await collectPreparedContextIssues(input.preparedContext);
   if (contextIssues.length > 0) {
-    return createBlockedResultWithoutAdapter(input, contextIssues, input.preparedContext);
+    return createBlockedResultWithoutAdapter(
+      input,
+      contextIssues,
+      sanitizePreparedContextForBlockedResult(input.preparedContext, input.plan),
+    );
   }
 
   return input.executor.invoke({
@@ -175,6 +180,20 @@ async function collectPreparedContextIssues(
   }
 
   return issues;
+}
+
+function sanitizePreparedContextForBlockedResult(
+  preparedContext: PreparedLaneExecutorContext,
+  plan: RunRequestExecutionPlan,
+): PreparedLaneExecutorContext {
+  if (localLaneIdPattern.test(preparedContext.laneRunId)) {
+    return preparedContext;
+  }
+
+  return {
+    ...preparedContext,
+    laneRunId: replaceProtocolIdPrefix(plan.provenance.requestId, "run"),
+  };
 }
 
 function createBlockedResultWithoutAdapter(
