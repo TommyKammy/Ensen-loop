@@ -19,8 +19,9 @@ real provider work. The boundary:
 
 - does not invoke an Agent Provider;
 - does not create branches, commits, change requests, issues, or reviews;
-- does not write a durable evidence bundle unless a later issue explicitly adds
-  that behavior;
+- may write local development evidence metadata references, but does not write
+  a production evidence archive or durable compliance bundle unless a later
+  issue explicitly adds that behavior;
 - does not require Ensen-flow code, services, packages, fixtures, local paths,
   or runtime state;
 - treats every RunRequest field as external protocol input, not internal
@@ -98,6 +99,7 @@ The Phase 3 local lane state machine is:
 | `running` | Ensen-loop is normalizing scope, journal entries, and bounded execution intent. | None |
 | `verifying` | Repo-owned verification commands are selected or recorded. | None by default |
 | `reviewing` | Reviewable local output is ready for human or tool inspection. | None by default |
+| `blocked` | The local lane run stopped at a missing or unsafe prerequisite with diagnostic reasons preserved. | None |
 | `completed` | The local lane run reached a clear terminal success outcome. | None unless a later issue adds an explicit adapter |
 | `failed` | The local lane run reached a clear terminal failure outcome. | None |
 
@@ -125,6 +127,13 @@ EvidenceBundleRef is reference metadata. It can point to a future artifact
 location only when the URI or path is traversal-free, secret-safe, and scoped to
 the documented local artifact root. An EvidenceBundleRef does not by itself
 prove that a durable evidence bundle exists.
+
+Phase 3 local lane persistence may write Ensen-loop-owned metadata under the
+prepared local state path using an EvidenceBundleRef `local_path` URI. That file
+records bounded development facts such as lane identifiers, executor outcome,
+verification summary, blocked reasons, and the validated reference metadata. It
+must not embed raw evidence bodies, secrets, customer data, provider
+credentials, workstation-local absolute paths, or production compliance claims.
 
 ## Fail-Closed Rules
 
