@@ -31,6 +31,7 @@ import {
 import type { RunRequestValidationIssue } from "../protocol/index.js";
 import type { CreateRunResultOptions } from "../protocol/index.js";
 import type { CreateRunStatusSnapshotOptions } from "../protocol/index.js";
+import { sanitizeCliErrorMessage } from "./diagnostics.js";
 
 const [, , command, ...args] = process.argv;
 
@@ -452,7 +453,8 @@ main()
     process.exitCode = exitCode;
   })
   .catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
+    const rawMessage = error instanceof Error ? error.message : String(error);
+    const message = sanitizeCliErrorMessage(rawMessage);
     printJson({
       ok: false,
       issues: [
