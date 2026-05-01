@@ -1,4 +1,5 @@
-import { lstat } from "node:fs/promises";
+import { lstat, readFile } from "node:fs/promises";
+import path from "node:path";
 
 import type {
   CreateRunResultOptions,
@@ -8,6 +9,10 @@ import type {
   VerificationSummary,
 } from "../protocol/index.js";
 import { createRunResult } from "../protocol/index.js";
+import {
+  preparedLocalLaneMarkerFilename,
+  preparedLocalLaneMarkerSchemaVersion,
+} from "../lane/index.js";
 
 export type LaneExecutorMode = "deterministic-local-fake";
 export type LocalFakeExecutorOutcome = "succeeded" | "failed" | "blocked";
@@ -141,19 +146,28 @@ export async function invokeLaneExecutor(input: InvokeLaneExecutorInput): Promis
     );
   }
 
-  return input.executor.invoke({
-    mode: deterministicLocalFakeMode,
-    plan: input.plan,
-    preparedContext: input.preparedContext,
-    completedAt: input.completedAt,
-    fixture: input.fixture,
-  });
+  try {
+    return await input.executor.invoke({
+      mode: deterministicLocalFakeMode,
+      plan: input.plan,
+      preparedContext: input.preparedContext,
+      completedAt: input.completedAt,
+      fixture: input.fixture,
+    });
+  } catch {
+    return createBlockedResultWithoutAdapter(
+      input,
+      ["Executor adapter failed before returning a result."],
+      input.preparedContext,
+    );
+  }
 }
 
 async function collectPreparedContextIssues(
   preparedContext: PreparedLaneExecutorContext,
 ): Promise<readonly string[]> {
   const issues: string[] = [];
+  const directoryKinds: Array<"workspace" | "state"> = [];
 
   if (!localLaneIdPattern.test(preparedContext.laneRunId)) {
     issues.push("Prepared lane context has an invalid lane run identifier.");
@@ -176,7 +190,72 @@ async function collectPreparedContextIssues(
       issues.push(`Prepared lane ${label} path must not be a symbolic link.`);
     } else if (stats && !stats.isDirectory()) {
       issues.push(`Prepared lane ${label} path must be a real directory.`);
+    } else if (stats) {
+      directoryKinds.push(label);
     }
+  }
+
+  if (localLaneIdPattern.test(preparedContext.laneRunId)) {
+    for (const directoryKind of directoryKinds) {
+      issues.push(...await collectPreparedMarkerIssues(preparedContext, directoryKind));
+    }
+  }
+
+  return issues;
+}
+
+async function collectPreparedMarkerIssues(
+  preparedContext: PreparedLaneExecutorContext,
+  directoryKind: "workspace" | "state",
+): Promise<readonly string[]> {
+  const issues: string[] = [];
+  const markerPath = path.join(
+    directoryKind === "workspace" ? preparedContext.workspacePath : preparedContext.statePath,
+    preparedLocalLaneMarkerFilename,
+  );
+  const markerStats = await lstat(markerPath).catch((error: unknown) => {
+    issues.push(
+      isNodeError(error) && error.code === "ENOENT"
+        ? `Prepared lane ${directoryKind} marker must exist before executor invocation.`
+        : `Prepared lane ${directoryKind} marker is not accessible before executor invocation.`,
+    );
+    return undefined;
+  });
+
+  if (markerStats?.isSymbolicLink()) {
+    issues.push(`Prepared lane ${directoryKind} marker must not be a symbolic link.`);
+    return issues;
+  }
+
+  if (markerStats && !markerStats.isFile()) {
+    issues.push(`Prepared lane ${directoryKind} marker must be a regular file.`);
+    return issues;
+  }
+
+  if (!markerStats) {
+    return issues;
+  }
+
+  const rawMarker = await readFile(markerPath, "utf8").catch(() => {
+    issues.push(`Prepared lane ${directoryKind} marker is not readable before executor invocation.`);
+    return undefined;
+  });
+
+  if (rawMarker === undefined) {
+    return issues;
+  }
+
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(rawMarker);
+  } catch {
+    issues.push(`Prepared lane ${directoryKind} marker is malformed.`);
+    return issues;
+  }
+
+  if (!isPreparedMarkerForLane(parsed, preparedContext.laneRunId)) {
+    issues.push(`Prepared lane ${directoryKind} marker does not match the lane run identifier.`);
   }
 
   return issues;
@@ -327,6 +406,19 @@ function replaceProtocolIdPrefix(value: string, prefix: string): string {
   }
 
   return `${prefix}_${value.slice(separatorIndex + 1)}`;
+}
+
+function isPreparedMarkerForLane(value: unknown, laneRunId: string): boolean {
+  return (
+    isRecord(value) &&
+    Object.keys(value).length === 2 &&
+    value.schemaVersion === preparedLocalLaneMarkerSchemaVersion &&
+    value.laneRunId === laneRunId
+  );
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isNodeError(error: unknown): error is NodeJS.ErrnoException {

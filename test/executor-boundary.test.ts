@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,7 +8,11 @@ import {
   createDeterministicLocalFakeExecutor,
   invokeLaneExecutor,
 } from "../src/executor/index.js";
-import { prepareLocalLaneWorkspace } from "../src/lane/index.js";
+import {
+  prepareLocalLaneWorkspace,
+  preparedLocalLaneMarkerFilename,
+  preparedLocalLaneMarkerSchemaVersion,
+} from "../src/lane/index.js";
 import {
   createRunRequestExecutionPlan,
   parseRunRequest,
@@ -173,6 +177,32 @@ test("fails closed for unsupported executor modes before invoking an adapter", a
   });
 });
 
+test("fails closed when a supported adapter rejects before returning a result", async () => {
+  await withPreparedLane(async (preparedContext) => {
+    const result = await invokeLaneExecutor({
+      executor: {
+        id: "deterministic-local-fake",
+        async invoke() {
+          throw new Error("token=raw-test-token");
+        },
+      },
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext,
+      completedAt: "2026-05-01T00:00:13Z",
+      fixture: {
+        name: "issue-40-adapter-rejects",
+        outcome: "succeeded",
+      },
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.deepEqual(result.blockedReasons, ["Executor adapter failed before returning a result."]);
+    assert.equal(result.invocation.laneRunId, preparedContext.laneRunId);
+    assert.doesNotMatch(JSON.stringify(result), /raw-test-token/);
+  });
+});
+
 test("validates unsafe fixture metadata before unsupported mode and missing context fallbacks", async () => {
   await withPreparedLane(async (preparedContext) => {
     let invoked = false;
@@ -275,6 +305,7 @@ test("blocks common local workstation path forms in fake fixture metadata", asyn
 
 test("fails closed when prepared lane context is missing or unprepared", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-workspace-"));
 
   try {
     const missing = await invokeLaneExecutor({
@@ -311,6 +342,71 @@ test("fails closed when prepared lane context is missing or unprepared", async (
     assert.equal(unprepared.status, "blocked");
     assert.match(unprepared.blockedReasons.join("\n"), /Prepared lane workspace path must exist/);
     await assert.rejects(() => mkdir(path.join(unpreparedWorkspacePath, "should-not-exist")), /ENOENT/);
+
+    const unmarkedWorkspacePath = await mkdtemp(path.join(workspaceRoot, "existing-workspace-"));
+    const unmarkedStatePath = await mkdtemp(path.join(stateRoot, "existing-state-"));
+    let invokedWithoutMarker = false;
+    const unmarked = await invokeLaneExecutor({
+      executor: {
+        id: "deterministic-local-fake",
+        async invoke() {
+          invokedWithoutMarker = true;
+          throw new Error("unexpected invocation");
+        },
+      },
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext: {
+        laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+        workspacePath: unmarkedWorkspacePath,
+        statePath: unmarkedStatePath,
+      },
+      completedAt: "2026-05-01T00:00:14Z",
+      fixture: {
+        name: "issue-40-unmarked-context",
+        outcome: "succeeded",
+      },
+    });
+
+    assert.equal(invokedWithoutMarker, false);
+    assert.equal(unmarked.status, "blocked");
+    assert.match(unmarked.blockedReasons.join("\n"), /marker must exist/);
+
+    await writeFile(
+      path.join(unmarkedWorkspacePath, preparedLocalLaneMarkerFilename),
+      `${JSON.stringify({
+        schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+        laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      path.join(unmarkedStatePath, preparedLocalLaneMarkerFilename),
+      `${JSON.stringify({
+        schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+        laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2ZZ",
+      })}\n`,
+      "utf8",
+    );
+
+    const mismatched = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext: {
+        laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+        workspacePath: unmarkedWorkspacePath,
+        statePath: unmarkedStatePath,
+      },
+      completedAt: "2026-05-01T00:00:15Z",
+      fixture: {
+        name: "issue-40-mismatched-marker",
+        outcome: "succeeded",
+      },
+    });
+
+    assert.equal(mismatched.status, "blocked");
+    assert.match(mismatched.blockedReasons.join("\n"), /state marker does not match/);
 
     const inaccessible = await invokeLaneExecutor({
       executor: createDeterministicLocalFakeExecutor(),
@@ -353,5 +449,6 @@ test("fails closed when prepared lane context is missing or unprepared", async (
     assert.doesNotMatch(JSON.stringify(invalidLaneRunId), /raw-test-token/);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
+    await rm(workspaceRoot, { recursive: true, force: true });
   }
 });
