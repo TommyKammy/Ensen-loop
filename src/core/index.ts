@@ -27,20 +27,20 @@ export const MODULE_BOUNDARIES = [
 
 export type ModuleBoundary = (typeof MODULE_BOUNDARIES)[number];
 
-export const SCM_PROVIDER_CAPABILITIES = [
+export const SCM_PROVIDER_CAPABILITIES = Object.freeze([
   "work-item-pickup",
   "lane-branch-intent",
   "lane-worktree-intent",
   "change-request-intent",
   "status-reporting",
-] as const;
+] as const);
 
 export type ScmProviderCapability = (typeof SCM_PROVIDER_CAPABILITIES)[number];
 
-export const AGENT_PROVIDER_CAPABILITIES = [
+export const AGENT_PROVIDER_CAPABILITIES = Object.freeze([
   "dry-run-intent",
   "execute-intent",
-] as const;
+] as const);
 
 export type AgentProviderCapability = (typeof AGENT_PROVIDER_CAPABILITIES)[number];
 
