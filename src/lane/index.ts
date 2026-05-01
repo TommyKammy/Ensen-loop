@@ -15,6 +15,7 @@ export type LaneRunStatus =
   | "running"
   | "verifying"
   | "reviewing"
+  | "blocked"
   | "completed"
   | "failed";
 
@@ -95,6 +96,7 @@ const laneRunStatuses = new Set<unknown>([
   "running",
   "verifying",
   "reviewing",
+  "blocked",
   "completed",
   "failed",
 ]);

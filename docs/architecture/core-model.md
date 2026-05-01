@@ -44,7 +44,7 @@ The Lane Journal is embedded in the Lane Run State for Phase 1. It records short
 Audit and evidence surfaces are represented as explicit reference lists on the Lane Run State:
 
 - `audit.eventRefs` reserves the relationship to future audit events without emitting a full EIP AuditEvent.
-- `evidence.bundleRefs` reserves the relationship to future evidence bundles. Dry-run output may expose EvidenceBundleRef v1-compatible reference metadata, but that metadata is not a full evidence bundle artifact and does not claim durable compliance packaging.
+- `evidence.bundleRefs` reserves the relationship to future evidence bundles. Dry-run output and Phase 3 local lane persistence may expose EvidenceBundleRef v1-compatible reference metadata, but that metadata is not a full evidence bundle artifact and does not claim durable compliance packaging.
 
 Local storage helpers must resolve lane run state paths below a real configured state root, reject lane run identifiers containing path separators or traversal syntax, and fail closed when existing storage components are symbolic links. Derived summaries, detail projections, or operator-facing notes must be rebuilt from the Lane Run State instead of redefining the durable status.
 

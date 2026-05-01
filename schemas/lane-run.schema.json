@@ -27,7 +27,7 @@
     },
     "status": {
       "type": "string",
-      "enum": ["queued", "running", "verifying", "reviewing", "completed", "failed"]
+      "enum": ["queued", "running", "verifying", "reviewing", "blocked", "completed", "failed"]
     },
     "revision": {
       "type": "integer",
