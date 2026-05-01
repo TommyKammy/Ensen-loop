@@ -17,6 +17,7 @@ import {
   createLaneRunState,
   preparedLocalLaneMarkerFilename,
   preparedLocalLaneMarkerSchemaVersion,
+  resolveLaneRunStatePath,
   writeLaneRunState,
 } from "../lane/index.js";
 
@@ -188,6 +189,8 @@ export async function invokeLaneExecutor(input: InvokeLaneExecutorInput): Promis
 export async function persistLaneExecutorResult(
   input: PersistLaneExecutorResultInput,
 ): Promise<PersistedLaneExecutorResult> {
+  assertExecutorResultMatchesPersistenceInput(input);
+
   const contextIssues = await collectPreparedContextIssues(input.preparedContext);
   if (contextIssues.length > 0) {
     throw new Error(`Prepared lane context is unsafe for persistence: ${contextIssues.join("; ")}`);
@@ -224,6 +227,7 @@ export async function persistLaneExecutorResult(
   });
 
   const writtenEvidencePaths: string[] = [];
+  const statePath = resolveLaneRunStatePath(input.stateRoot, state.id);
 
   try {
     for (const [index, evidenceBundleRef] of evidenceBundleRefs.entries()) {
@@ -243,7 +247,7 @@ export async function persistLaneExecutorResult(
       writtenEvidencePaths.push(metadataPath);
     }
 
-    const statePath = await writeLaneRunState(input.stateRoot, state);
+    await writeLaneRunState(input.stateRoot, state);
 
     return {
       state,
@@ -253,7 +257,34 @@ export async function persistLaneExecutorResult(
     };
   } catch (error) {
     await Promise.all(writtenEvidencePaths.map((metadataPath) => rm(metadataPath, { force: true })));
+    await rm(statePath, { force: true });
     throw error;
+  }
+}
+
+function assertExecutorResultMatchesPersistenceInput(input: PersistLaneExecutorResultInput): void {
+  if (input.executorResult.invocation.laneRunId !== input.preparedContext.laneRunId) {
+    throw new Error("Executor result lane run identifier does not match the prepared context.");
+  }
+
+  if (input.executorResult.invocation.requestId !== input.plan.provenance.requestId) {
+    throw new Error("Executor result request identifier does not match the execution plan.");
+  }
+
+  if (input.executorResult.invocation.workItemId !== input.plan.workItem.id) {
+    throw new Error("Executor result work item identifier does not match the execution plan.");
+  }
+
+  if (input.executorResult.runResult.requestId !== input.plan.provenance.requestId) {
+    throw new Error("Executor run result request identifier does not match the execution plan.");
+  }
+
+  if (input.executorResult.runResult.correlationId !== input.plan.provenance.correlationId) {
+    throw new Error("Executor run result correlation identifier does not match the execution plan.");
+  }
+
+  if (input.executorResult.runResult.status !== input.executorResult.status) {
+    throw new Error("Executor run result status does not match the executor outcome.");
   }
 }
 

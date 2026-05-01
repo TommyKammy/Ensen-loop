@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -9,7 +9,11 @@ import {
   invokeLaneExecutor,
   persistLaneExecutorResult,
 } from "../src/executor/index.js";
-import { prepareLocalLaneWorkspace, readLaneRunState } from "../src/lane/index.js";
+import {
+  prepareLocalLaneWorkspace,
+  readLaneRunState,
+  resolveLaneRunStatePath,
+} from "../src/lane/index.js";
 import {
   createRunRequestExecutionPlan,
   parseRunRequest,
@@ -125,16 +129,72 @@ test("persists a succeeded Phase 3 lane journal and local evidence metadata for 
         readBack.journal.entries.map((entry) => entry.message).join("\n"),
         /prepared workspace facts recorded/,
       );
-      assert.doesNotMatch(
-        JSON.stringify({
-          state: persisted.state,
-          evidenceBundleRefs: persisted.evidenceBundleRefs,
-          metadata,
-        }),
-        new RegExp(os.tmpdir()),
-      );
+      const serialized = JSON.stringify({
+        state: persisted.state,
+        evidenceBundleRefs: persisted.evidenceBundleRefs,
+        metadata,
+      });
+      assert.equal(serialized.includes(os.tmpdir()), false);
     },
   );
+});
+
+test("rejects executor results that do not belong to the prepared lane", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-workspace-"));
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+  const laneRunId = "run_01HV7Y8M8F2KQ5W3P9R6T4N2BA";
+  const plan = createRunRequestExecutionPlan(request);
+
+  try {
+    const preparedContext = await prepareLocalLaneWorkspace({
+      workspaceRoot,
+      stateRoot,
+      laneRunId,
+      workItemId: request.workItem.workItemId,
+    });
+    const executorContext = {
+      laneRunId,
+      workspacePath: preparedContext.workspacePath,
+      statePath: preparedContext.statePath,
+    };
+    const executorResult = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan,
+      preparedContext: executorContext,
+      completedAt: "2026-05-01T00:00:02Z",
+      fixture: {
+        name: "issue-41-mismatched-result",
+        outcome: "succeeded",
+      },
+    });
+
+    await assert.rejects(
+      () =>
+        persistLaneExecutorResult({
+          stateRoot,
+          plan,
+          preparedContext: executorContext,
+          executorResult: {
+            ...executorResult,
+            invocation: {
+              ...executorResult.invocation,
+              laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2ZZ",
+            },
+          },
+          recordedAt: "2026-05-01T00:00:03Z",
+        }),
+      /Executor result lane run identifier does not match the prepared context/,
+    );
+    await assert.rejects(() => readLaneRunState(stateRoot, laneRunId), /ENOENT/);
+    await assert.rejects(
+      () => access(path.join(preparedContext.statePath, "artifacts")),
+      /ENOENT/,
+    );
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+  }
 });
 
 test("persists failed and blocked Phase 3 outcomes with diagnostic journal entries", async () => {
@@ -228,5 +288,71 @@ test("rejects unsafe EvidenceBundleRef output before writing evidence metadata o
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("cleans evidence metadata and lane-state path when persistence fails", async () => {
+  const workspaceRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-workspace-"));
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-outside-"));
+  const laneRunId = "run_01HV7Y8M8F2KQ5W3P9R6T4N2BA";
+  const plan = createRunRequestExecutionPlan(request);
+
+  try {
+    const preparedContext = await prepareLocalLaneWorkspace({
+      workspaceRoot,
+      stateRoot,
+      laneRunId,
+      workItemId: request.workItem.workItemId,
+    });
+    const executorContext = {
+      laneRunId,
+      workspacePath: preparedContext.workspacePath,
+      statePath: preparedContext.statePath,
+    };
+    const executorResult = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan,
+      preparedContext: executorContext,
+      completedAt: "2026-05-01T00:00:05Z",
+      fixture: {
+        name: "issue-41-cleanup-failure",
+        outcome: "succeeded",
+      },
+    });
+    const statePath = resolveLaneRunStatePath(stateRoot, laneRunId);
+    const outsideStatePath = path.join(outsideRoot, "outside-lane-state.json");
+    const evidenceMetadataPath = path.join(
+      preparedContext.statePath,
+      "artifacts",
+      "evidence",
+      "local-lane",
+      `${laneRunId}.json`,
+    );
+
+    await mkdir(path.dirname(statePath), { recursive: true });
+    await writeFile(outsideStatePath, "outside state must not be touched\n", "utf8");
+    await symlink(outsideStatePath, statePath);
+
+    await assert.rejects(
+      () =>
+        persistLaneExecutorResult({
+          stateRoot,
+          plan,
+          preparedContext: executorContext,
+          executorResult,
+          recordedAt: "2026-05-01T00:00:06Z",
+        }),
+      /Lane run state paths must not traverse symbolic links/,
+    );
+
+    await assert.rejects(() => access(statePath), /ENOENT/);
+    await assert.rejects(() => access(evidenceMetadataPath), /ENOENT/);
+    assert.equal(await readFile(outsideStatePath, "utf8"), "outside state must not be touched\n");
+  } finally {
+    await rm(workspaceRoot, { recursive: true, force: true });
+    await rm(stateRoot, { recursive: true, force: true });
+    await rm(outsideRoot, { recursive: true, force: true });
   }
 });
