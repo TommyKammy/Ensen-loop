@@ -83,6 +83,9 @@ export interface PreparedLocalLaneWorkspace {
   };
 }
 
+export const preparedLocalLaneMarkerFilename = ".ensen-loop-prepared.json";
+export const preparedLocalLaneMarkerSchemaVersion = "ensen.local-lane-prepared.v1";
+
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
 const isoDateTimePattern =
@@ -156,6 +159,8 @@ export async function prepareLocalLaneWorkspace(
   try {
     workspaceResult = await prepareLocalLanePath("workspace", workspaceRoot, directoryName);
     const stateResult = await prepareLocalLanePath("state", stateRoot, directoryName);
+    await writePreparedLocalLaneMarker(workspaceResult.path, directoryName);
+    await writePreparedLocalLaneMarker(stateResult.path, directoryName);
 
     return {
       directoryName,
@@ -522,6 +527,35 @@ function toSerializableLaneRunState(state: LaneRunState): LaneRunState {
       bundleRefs: [...state.evidence.bundleRefs],
     },
   };
+}
+
+async function writePreparedLocalLaneMarker(statePath: string, laneRunId: string): Promise<void> {
+  const markerPath = path.join(statePath, preparedLocalLaneMarkerFilename);
+  const marker = `${JSON.stringify(
+    {
+      schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+      laneRunId,
+    },
+    null,
+    2,
+  )}\n`;
+  const file = await open(
+    markerPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | noFollowFlag() | nonBlockingFlag(),
+    0o600,
+  );
+
+  try {
+    const stats = await file.stat();
+
+    if (!stats.isFile()) {
+      throw new Error("Local lane preparation marker path must be a regular file.");
+    }
+
+    await file.writeFile(marker, "utf8");
+  } finally {
+    await file.close();
+  }
 }
 
 function parseLaneRunState(value: unknown): LaneRunState {

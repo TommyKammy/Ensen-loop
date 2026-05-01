@@ -6,6 +6,8 @@ import test from "node:test";
 
 import {
   prepareLocalLaneWorkspace,
+  preparedLocalLaneMarkerFilename,
+  preparedLocalLaneMarkerSchemaVersion,
   resolveLocalLaneDirectoryName,
 } from "../src/lane/index.js";
 
@@ -28,6 +30,20 @@ test("prepares bounded local workspace and state directories for one lane run", 
       workspace: true,
       state: true,
     });
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(prepared.workspacePath, preparedLocalLaneMarkerFilename), "utf8")),
+      {
+        schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+        laneRunId: prepared.directoryName,
+      },
+    );
+    assert.deepEqual(
+      JSON.parse(await readFile(path.join(prepared.statePath, preparedLocalLaneMarkerFilename), "utf8")),
+      {
+        schemaVersion: preparedLocalLaneMarkerSchemaVersion,
+        laneRunId: prepared.directoryName,
+      },
+    );
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
