@@ -81,6 +81,12 @@ async function withPreparedLane(
   }
 }
 
+function jsonStringContentPattern(value: string): RegExp {
+  const serializedValue = JSON.stringify(value).slice(1, -1);
+
+  return new RegExp(serializedValue.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+}
+
 test("invokes the deterministic local fake executor through the provider boundary", async () => {
   await withPreparedLane(async (preparedContext) => {
     const result = await invokeLaneExecutor({
@@ -299,7 +305,7 @@ test("blocks common local workstation path forms in fake fixture metadata", asyn
 
       assert.equal(result.status, "blocked");
       assert.match(result.blockedReasons.join("\n"), /unsafe metadata/);
-      assert.equal(JSON.stringify(result).includes(verificationSummary), false);
+      assert.doesNotMatch(JSON.stringify(result), jsonStringContentPattern(verificationSummary));
     }
   });
 });

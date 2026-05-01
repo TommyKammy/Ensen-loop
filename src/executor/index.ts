@@ -214,7 +214,13 @@ async function collectPreparedMarkerIssues(
     directoryKind === "workspace" ? preparedContext.workspacePath : preparedContext.statePath,
     preparedLocalLaneMarkerFilename,
   );
-  const markerFile = await open(markerPath, constants.O_RDONLY | noFollowFlag()).catch((error: unknown) => {
+  const markerNoFollowFlag = noFollowFlag();
+  if (markerNoFollowFlag === 0) {
+    issues.push(`Prepared lane ${directoryKind} marker cannot be verified without no-follow file open support.`);
+    return issues;
+  }
+
+  const markerFile = await open(markerPath, constants.O_RDONLY | markerNoFollowFlag).catch((error: unknown) => {
     issues.push(
       isNodeError(error) && error.code === "ENOENT"
         ? `Prepared lane ${directoryKind} marker must exist before executor invocation.`
