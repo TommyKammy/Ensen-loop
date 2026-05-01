@@ -24,8 +24,8 @@ These modules may share the small contracts from `src/core/`, but the core model
 | --- | --- |
 | Work Item | A unit of lane work selected for execution. It has a stable identifier, title, source, and lifecycle status, but it is not tied to a specific issue tracker. |
 | Change Request | A proposed source change produced for a Work Item. It can later map to a pull request, patch, or another SCM-native review object through an adapter. |
-| Agent Provider | A boundary for an implementation that can perform lane work. The core model only requires an identifier and display name. |
-| SCM Provider | A boundary for source-control operations. The core model does not require any specific host, token, repository service, or remote API. |
+| Agent Provider | A boundary for an implementation that can perform lane work. The core model records provider-neutral capability names, not provider command syntax. |
+| SCM Provider | A boundary for source-control operations. The core model records provider-neutral capability names and does not require any specific host, token, repository service, or remote API. |
 | Verification Result | The outcome of a repo-owned verification command or check, including the command, outcome, and summary. |
 | Review Event | A review signal attached to a Change Request, such as a comment, approval, requested change, or dismissal. |
 | Lane Journal | The short-horizon record for current lane work: hypothesis, commands, failures, changes, and next action. |
@@ -51,6 +51,8 @@ Local storage helpers must resolve lane run state paths below a real configured 
 ## Provider Posture
 
 GitHub and Codex are future adapter examples, not core model requirements. A future GitHub adapter may bind Work Items to issues and Change Requests to pull requests. A future Codex adapter may satisfy the Agent Provider boundary. Neither adapter is required for this repository to build, test, or explain its Phase 1 model.
+
+The Phase 4 dogfood provider capability boundary is documented in [provider-capabilities.md](provider-capabilities.md). It keeps SCMProvider and AgentProvider capability names provider-neutral so GitHub/Codex can be initial adapters without becoming core concepts.
 
 ## Independence Rules
 

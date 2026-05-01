@@ -27,6 +27,23 @@ export const MODULE_BOUNDARIES = [
 
 export type ModuleBoundary = (typeof MODULE_BOUNDARIES)[number];
 
+export const SCM_PROVIDER_CAPABILITIES = [
+  "work-item-pickup",
+  "lane-branch-intent",
+  "lane-worktree-intent",
+  "change-request-intent",
+  "status-reporting",
+] as const;
+
+export type ScmProviderCapability = (typeof SCM_PROVIDER_CAPABILITIES)[number];
+
+export const AGENT_PROVIDER_CAPABILITIES = [
+  "dry-run-intent",
+  "execute-intent",
+] as const;
+
+export type AgentProviderCapability = (typeof AGENT_PROVIDER_CAPABILITIES)[number];
+
 export interface WorkItem {
   readonly id: string;
   readonly title: string;
@@ -43,11 +60,13 @@ export interface ChangeRequest {
 export interface AgentProvider {
   readonly id: string;
   readonly displayName: string;
+  readonly capabilities: readonly AgentProviderCapability[];
 }
 
 export interface ScmProvider {
   readonly id: string;
   readonly displayName: string;
+  readonly capabilities: readonly ScmProviderCapability[];
 }
 
 export interface VerificationResult {

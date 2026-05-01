@@ -1,1 +1,6 @@
-export type { ChangeRequest, ScmProvider } from "../core/index.js";
+export {
+  SCM_PROVIDER_CAPABILITIES,
+  type ChangeRequest,
+  type ScmProvider,
+  type ScmProviderCapability,
+} from "../core/index.js";

@@ -4,6 +4,10 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  AGENT_PROVIDER_CAPABILITIES,
+  SCM_PROVIDER_CAPABILITIES,
+} from "../src/core/index.js";
+import {
   createRunRequestExecutionPlan,
   parseRunRequest,
 } from "../src/protocol/index.js";
@@ -107,10 +111,12 @@ test("maps an issue-like RunRequest into a bounded execution plan", async () => 
     },
     agentProvider: {
       intent: "normalize agent intent without invoking a provider",
+      capabilities: AGENT_PROVIDER_CAPABILITIES,
       invokesProvider: false,
     },
     scmProvider: {
       intent: "normalize repository intent without creating branches, commits, or change requests",
+      capabilities: SCM_PROVIDER_CAPABILITIES,
       createsBranch: false,
       opensChangeRequest: false,
     },

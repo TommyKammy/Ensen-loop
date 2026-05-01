@@ -3,6 +3,11 @@ import { execFile } from "node:child_process";
 import test from "node:test";
 import { promisify } from "node:util";
 
+import {
+  AGENT_PROVIDER_CAPABILITIES,
+  SCM_PROVIDER_CAPABILITIES,
+} from "../src/core/index.js";
+
 const execFileAsync = promisify(execFile);
 
 test("dry-run sample emits a normalized execution plan", async () => {
@@ -29,10 +34,12 @@ test("dry-run sample emits a normalized execution plan", async () => {
     };
     agentProvider: {
       intent: string;
+      capabilities: readonly string[];
       invokesProvider: boolean;
     };
     scmProvider: {
       intent: string;
+      capabilities: readonly string[];
       createsBranch: boolean;
       opensChangeRequest: boolean;
     };
@@ -61,10 +68,12 @@ test("dry-run sample emits a normalized execution plan", async () => {
   });
   assert.deepEqual(plan.agentProvider, {
     intent: "describe agent selection without invoking an agent provider",
+    capabilities: AGENT_PROVIDER_CAPABILITIES,
     invokesProvider: false,
   });
   assert.deepEqual(plan.scmProvider, {
     intent: "describe SCM actions without creating branches, commits, or change requests",
+    capabilities: SCM_PROVIDER_CAPABILITIES,
     createsBranch: false,
     opensChangeRequest: false,
   });

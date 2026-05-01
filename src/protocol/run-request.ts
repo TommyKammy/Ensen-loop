@@ -1,3 +1,8 @@
+import {
+  AGENT_PROVIDER_CAPABILITIES,
+  SCM_PROVIDER_CAPABILITIES,
+} from "../core/index.js";
+
 export interface RunRequestSource {
   readonly sourceId: string;
   readonly sourceType: string;
@@ -96,10 +101,12 @@ export interface RunRequestExecutionPlan {
   };
   readonly agentProvider: {
     readonly intent: string;
+    readonly capabilities: typeof AGENT_PROVIDER_CAPABILITIES;
     readonly invokesProvider: false;
   };
   readonly scmProvider: {
     readonly intent: string;
+    readonly capabilities: typeof SCM_PROVIDER_CAPABILITIES;
     readonly createsBranch: false;
     readonly opensChangeRequest: false;
   };
@@ -263,10 +270,12 @@ export function createRunRequestExecutionPlan(request: RunRequest): RunRequestEx
     laneWorkspace: createLaneWorkspacePlan(request),
     agentProvider: {
       intent: "normalize agent intent without invoking a provider",
+      capabilities: AGENT_PROVIDER_CAPABILITIES,
       invokesProvider: false,
     },
     scmProvider: {
       intent: "normalize repository intent without creating branches, commits, or change requests",
+      capabilities: SCM_PROVIDER_CAPABILITIES,
       createsBranch: false,
       opensChangeRequest: false,
     },

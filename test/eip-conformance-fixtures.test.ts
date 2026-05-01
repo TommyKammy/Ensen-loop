@@ -4,6 +4,8 @@ import path from "node:path";
 import test from "node:test";
 
 import {
+  AGENT_PROVIDER_CAPABILITIES,
+  SCM_PROVIDER_CAPABILITIES,
   createRunRequestExecutionPlan,
   createRunResult,
   createRunStatusSnapshot,
@@ -175,10 +177,12 @@ test(`${protocolLabel} dry-run consumer and producer outputs stay fixture-compat
     },
     agentProvider: {
       intent: "normalize agent intent without invoking a provider",
+      capabilities: AGENT_PROVIDER_CAPABILITIES,
       invokesProvider: false,
     },
     scmProvider: {
       intent: "normalize repository intent without creating branches, commits, or change requests",
+      capabilities: SCM_PROVIDER_CAPABILITIES,
       createsBranch: false,
       opensChangeRequest: false,
     },
