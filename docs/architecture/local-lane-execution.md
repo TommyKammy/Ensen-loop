@@ -70,6 +70,17 @@ state root resolution. A path that cannot be proven to stay inside the intended
 root is unsafe and must block the run before durable state or filesystem
 mutation occurs.
 
+`prepareLocalLaneWorkspace()` is the Ensen-loop-owned local preparation helper
+for one bounded lane run. Callers provide absolute `<workspace-root>` and
+`<state-root>` paths, plus a lane run identifier or work item identifier. The
+helper derives one stable local directory name, prepares
+`<workspace-root>/lane-runs/<lane-id>` and
+`<state-root>/lane-runs/<lane-id>`, rejects missing roots, relative roots,
+shared workspace/state roots, malformed identifiers, traversal-shaped
+identifiers, symlinked roots, and symlink-mediated lane paths, and rolls back
+only the lane workspace directory it created if state preparation fails. It does
+not start an agent, create SCM state, mutate GitHub, or delete unrelated files.
+
 Examples should use placeholders such as `<workspace-root>`, `<state-root>`,
 `<run-request-json-file>`, and `<supervisor-config-path>`.
 
