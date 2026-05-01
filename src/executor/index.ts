@@ -72,8 +72,9 @@ const fixtureNamePattern = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const localLaneIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
 const credentialPattern =
   /(?:password|passwd|token|secret|credential|api[_-]?key)\s*[:=]\s*\S+/i;
-const unixHomePathPattern = /\/Users\/[^/\s]+|\/home\/[^/\s]+/;
-const windowsProfilePathPattern = /[A-Za-z]:\\Users\\[^\\\s]+/;
+const unsafeLocalPathPattern =
+  /(?:^|[\s"'([{<>=])(?:\/(?:[^\s"'`<>]*)?|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:\\[^\s"'`<>]+|\\\\[^\\\s]+\\[^\\\s]+)/i;
+const redactedFixtureName = "[REDACTED_FIXTURE]";
 
 export function createDeterministicLocalFakeExecutor(): LaneExecutorAdapter {
   return {
@@ -81,7 +82,7 @@ export function createDeterministicLocalFakeExecutor(): LaneExecutorAdapter {
     async invoke(input) {
       const fixtureIssues = collectFixtureIssues(input.fixture);
       if (fixtureIssues.length > 0) {
-        return createBlockedExecutorResult(input, fixtureIssues);
+        return createBlockedExecutorResult(input, fixtureIssues, true);
       }
 
       if (input.plan.status === "blocked") {
@@ -113,6 +114,11 @@ export function createDeterministicLocalFakeExecutor(): LaneExecutorAdapter {
 }
 
 export async function invokeLaneExecutor(input: InvokeLaneExecutorInput): Promise<LaneExecutorResult> {
+  const fixtureIssues = collectFixtureIssues(input.fixture);
+  if (fixtureIssues.length > 0) {
+    return createBlockedResultWithoutAdapter(input, fixtureIssues, undefined, true);
+  }
+
   if (input.mode !== deterministicLocalFakeMode || input.executor.id !== deterministicLocalFakeMode) {
     return createBlockedResultWithoutAdapter(input, [
       `Unsupported executor mode: ${input.mode}`,
@@ -153,12 +159,12 @@ async function collectPreparedContextIssues(
     ["state", preparedContext.statePath],
   ] as const) {
     const stats = await lstat(candidatePath).catch((error: unknown) => {
-      if (isNodeError(error) && error.code === "ENOENT") {
-        issues.push(`Prepared lane ${label} path must exist before executor invocation.`);
-        return undefined;
-      }
-
-      throw error;
+      issues.push(
+        isNodeError(error) && error.code === "ENOENT"
+          ? `Prepared lane ${label} path must exist before executor invocation.`
+          : `Prepared lane ${label} path is not accessible before executor invocation.`,
+      );
+      return undefined;
     });
 
     if (stats?.isSymbolicLink()) {
@@ -175,6 +181,7 @@ function createBlockedResultWithoutAdapter(
   input: InvokeLaneExecutorInput,
   blockedReasons: readonly string[],
   preparedContext?: PreparedLaneExecutorContext,
+  redactFixtureMetadata = false,
 ): LaneExecutorResult {
   const adapterInput: LaneExecutorAdapterInput = {
     mode: deterministicLocalFakeMode,
@@ -188,16 +195,17 @@ function createBlockedResultWithoutAdapter(
     fixture: input.fixture,
   };
 
-  return createBlockedExecutorResult(adapterInput, blockedReasons);
+  return createBlockedExecutorResult(adapterInput, blockedReasons, redactFixtureMetadata);
 }
 
 function createBlockedExecutorResult(
   input: LaneExecutorAdapterInput,
   blockedReasons: readonly string[],
+  redactFixtureMetadata = false,
 ): LaneExecutorResult {
   return {
     status: "blocked",
-    invocation: createInvocationMetadata(input),
+    invocation: createInvocationMetadata(input, redactFixtureMetadata),
     runResult: createRunResult(
       {
         ...input.plan,
@@ -223,14 +231,17 @@ function createBlockedExecutorResult(
   };
 }
 
-function createInvocationMetadata(input: LaneExecutorAdapterInput): LaneExecutorInvocationMetadata {
+function createInvocationMetadata(
+  input: LaneExecutorAdapterInput,
+  redactFixtureMetadata = false,
+): LaneExecutorInvocationMetadata {
   return {
     executorId: deterministicLocalFakeMode,
     mode: deterministicLocalFakeMode,
     laneRunId: input.preparedContext.laneRunId,
     requestId: input.plan.provenance.requestId,
     workItemId: input.plan.workItem.id,
-    fixtureName: input.fixture.name,
+    fixtureName: redactFixtureMetadata ? redactedFixtureName : input.fixture.name,
     invokedAt: input.completedAt,
     invokesProvider: false,
     mutatesScm: false,
@@ -241,7 +252,7 @@ function createVerificationSummary(
   fixture: LocalFakeExecutorFixture,
   status: Exclude<LocalFakeExecutorOutcome, "blocked">,
 ): VerificationSummary {
-  const verificationStatus: CreateRunResultOptions["verification"] = {
+  const verificationStatus: NonNullable<CreateRunResultOptions["verification"]> = {
     status: status === "succeeded" ? "passed" : "failed",
     summary:
       fixture.verificationSummary ??
@@ -285,8 +296,7 @@ function collectFixtureIssues(fixture: LocalFakeExecutorFixture): readonly strin
 function containsUnsafeFixtureText(value: string): boolean {
   return (
     credentialPattern.test(value) ||
-    unixHomePathPattern.test(value) ||
-    windowsProfilePathPattern.test(value)
+    unsafeLocalPathPattern.test(value)
   );
 }
 

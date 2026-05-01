@@ -172,8 +172,54 @@ test("fails closed for unsupported executor modes before invoking an adapter", a
   });
 });
 
+test("validates unsafe fixture metadata before unsupported mode and missing context fallbacks", async () => {
+  await withPreparedLane(async (preparedContext) => {
+    let invoked = false;
+    const unsupported = await invokeLaneExecutor({
+      executor: {
+        id: "not-supported",
+        async invoke() {
+          invoked = true;
+          throw new Error("unexpected invocation");
+        },
+      },
+      mode: "remote-provider",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext,
+      completedAt: "2026-05-01T00:00:08Z",
+      fixture: {
+        name: "token=raw-test-token",
+        outcome: "succeeded",
+      },
+    });
+
+    const missingContext = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      completedAt: "2026-05-01T00:00:09Z",
+      fixture: {
+        name: "issue-40-env-path",
+        outcome: "succeeded",
+        verificationSummary: ["uses", "$HOME", "fixture"].join(" "),
+      },
+    });
+
+    assert.equal(invoked, false);
+    assert.equal(unsupported.status, "blocked");
+    assert.match(unsupported.blockedReasons.join("\n"), /unsafe metadata/);
+    assert.doesNotMatch(unsupported.blockedReasons.join("\n"), /Unsupported executor mode/);
+    assert.equal(unsupported.invocation.fixtureName, "[REDACTED_FIXTURE]");
+    assert.doesNotMatch(JSON.stringify(unsupported), /raw-test-token/);
+    assert.equal(missingContext.status, "blocked");
+    assert.match(missingContext.blockedReasons.join("\n"), /unsafe metadata/);
+    assert.doesNotMatch(missingContext.blockedReasons.join("\n"), /Prepared lane context is required/);
+  });
+});
+
 test("blocks unsafe fake fixture metadata without echoing raw secret or workstation paths", async () => {
   await withPreparedLane(async (preparedContext) => {
+    const unixAbsolutePath = ["", "etc", "ensen-loop", "fixture.txt"].join(path.posix.sep);
     const result = await invokeLaneExecutor({
       executor: createDeterministicLocalFakeExecutor(),
       mode: "deterministic-local-fake",
@@ -183,7 +229,7 @@ test("blocks unsafe fake fixture metadata without echoing raw secret or workstat
       fixture: {
         name: "issue-40-unsafe",
         outcome: "succeeded",
-        verificationSummary: "token=raw-test-token at /Users/example/project",
+        verificationSummary: `token=raw-test-token at ${unixAbsolutePath}`,
       },
     });
     const serialized = JSON.stringify(result);
@@ -191,7 +237,38 @@ test("blocks unsafe fake fixture metadata without echoing raw secret or workstat
     assert.equal(result.status, "blocked");
     assert.match(result.blockedReasons.join("\n"), /unsafe metadata/);
     assert.doesNotMatch(serialized, /raw-test-token/);
-    assert.doesNotMatch(serialized, /\/Users\/example/);
+    assert.doesNotMatch(serialized, /ensen-loop\/fixture/);
+  });
+});
+
+test("blocks common local workstation path forms in fake fixture metadata", async () => {
+  await withPreparedLane(async (preparedContext) => {
+    const fixtureTexts = [
+      ["", "var", "folders", "fixture"].join(path.posix.sep),
+      ["C:", "tmp", "fixture"].join("\\"),
+      ["", "", "server", "share", "fixture"].join("\\"),
+      ["uses", "~", "fixture"].join(" "),
+      ["uses", "%USERPROFILE%", "fixture"].join(" "),
+    ];
+
+    for (const [index, verificationSummary] of fixtureTexts.entries()) {
+      const result = await invokeLaneExecutor({
+        executor: createDeterministicLocalFakeExecutor(),
+        mode: "deterministic-local-fake",
+        plan: createRunRequestExecutionPlan(request),
+        preparedContext,
+        completedAt: "2026-05-01T00:00:10Z",
+        fixture: {
+          name: `issue-40-path-${index}`,
+          outcome: "succeeded",
+          verificationSummary,
+        },
+      });
+
+      assert.equal(result.status, "blocked");
+      assert.match(result.blockedReasons.join("\n"), /unsafe metadata/);
+      assert.equal(JSON.stringify(result).includes(verificationSummary), false);
+    }
   });
 });
 
@@ -233,6 +310,25 @@ test("fails closed when prepared lane context is missing or unprepared", async (
     assert.equal(unprepared.status, "blocked");
     assert.match(unprepared.blockedReasons.join("\n"), /Prepared lane workspace path must exist/);
     await assert.rejects(() => mkdir(path.join(unpreparedWorkspacePath, "should-not-exist")), /ENOENT/);
+
+    const inaccessible = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext: {
+        laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2AA",
+        workspacePath: `bad\0path-${process.pid}`,
+        statePath: stateRoot,
+      },
+      completedAt: "2026-05-01T00:00:11Z",
+      fixture: {
+        name: "issue-40-inaccessible-context",
+        outcome: "succeeded",
+      },
+    });
+
+    assert.equal(inaccessible.status, "blocked");
+    assert.match(inaccessible.blockedReasons.join("\n"), /workspace path is not accessible/);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }
