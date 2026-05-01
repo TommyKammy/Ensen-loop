@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readFile, rm } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
@@ -211,3 +211,43 @@ test("X-Gate 3 smoke CLI rejects unsafe local roots before durable lane state wr
     );
   });
 });
+
+test("X-Gate 3 smoke CLI redacts filesystem paths from preparation failures", async () => {
+  await withRoots(async (roots) => {
+    const fixturePath = path.join(fixtureRoot, "run-request/v1/valid/github-issue-request.json");
+    const laneRunId = "run_01HV7Y8M8F2KQ5W3P9R6T4N2AB";
+    const markerPath = path.join(
+      roots.workspaceRoot,
+      "lane-runs",
+      laneRunId,
+      ".ensen-loop-prepared.json",
+    );
+
+    await mkdir(markerPath, { recursive: true });
+    await mkdir(path.join(roots.stateRoot, "lane-runs", laneRunId), { recursive: true });
+
+    await assert.rejects(
+      execFileAsync(process.execPath, smokeArgs(fixturePath, roots)),
+      (error: unknown) => {
+        assert.ok(error && typeof error === "object" && "stdout" in error);
+        const output = JSON.parse(String(error.stdout)) as {
+          ok: boolean;
+          issues: readonly { message: string }[];
+        };
+        const messages = output.issues.map((issue) => issue.message).join("\n");
+
+        assert.equal(output.ok, false);
+        assert.match(messages, /EISDIR|illegal operation|directory/);
+        assert.match(messages, /<local-path>/);
+        assert.doesNotMatch(messages, new RegExp(escapeRegExp(roots.workspaceRoot)));
+        assert.doesNotMatch(messages, new RegExp(escapeRegExp(roots.stateRoot)));
+        assert.doesNotMatch(messages, new RegExp(escapeRegExp(markerPath)));
+        return true;
+      },
+    );
+  });
+});
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
