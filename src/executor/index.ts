@@ -228,6 +228,7 @@ export async function persistLaneExecutorResult(
 
   const writtenEvidencePaths: string[] = [];
   const statePath = resolveLaneRunStatePath(input.stateRoot, state.id);
+  const statePathExistedBeforeAttempt = await laneRunStatePathExists(statePath);
 
   try {
     for (const [index, evidenceBundleRef] of evidenceBundleRefs.entries()) {
@@ -257,9 +258,24 @@ export async function persistLaneExecutorResult(
     };
   } catch (error) {
     await Promise.all(writtenEvidencePaths.map((metadataPath) => rm(metadataPath, { force: true })));
-    await rm(statePath, { force: true });
+    if (!statePathExistedBeforeAttempt) {
+      await rm(statePath, { force: true });
+    }
     throw error;
   }
+}
+
+async function laneRunStatePathExists(statePath: string): Promise<boolean> {
+  return lstat(statePath).then(
+    () => true,
+    (error: unknown) => {
+      if (isNodeError(error) && error.code === "ENOENT") {
+        return false;
+      }
+
+      throw error;
+    },
+  );
 }
 
 function assertExecutorResultMatchesPersistenceInput(input: PersistLaneExecutorResultInput): void {
