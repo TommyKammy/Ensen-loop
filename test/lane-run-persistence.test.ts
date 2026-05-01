@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -55,6 +55,11 @@ async function withPersistedFixture(
   fixture: Parameters<typeof invokeLaneExecutor>[0]["fixture"],
   callback: (context: {
     readonly stateRoot: string;
+    readonly preparedContext: {
+      readonly laneRunId: string;
+      readonly workspacePath: string;
+      readonly statePath: string;
+    };
     readonly persisted: Awaited<ReturnType<typeof persistLaneExecutorResult>>;
   }) => Promise<void>,
 ): Promise<void> {
@@ -92,7 +97,7 @@ async function withPersistedFixture(
       recordedAt: "2026-05-01T00:00:02Z",
     });
 
-    await callback({ stateRoot, persisted });
+    await callback({ stateRoot, preparedContext: executorContext, persisted });
   } finally {
     await rm(workspaceRoot, { recursive: true, force: true });
     await rm(stateRoot, { recursive: true, force: true });
@@ -135,6 +140,49 @@ test("persists a succeeded Phase 3 lane journal and local evidence metadata for 
         metadata,
       });
       assert.equal(serialized.includes(os.tmpdir()), false);
+    },
+  );
+});
+
+test("preserves existing lane state when a retry fails on existing evidence metadata", async () => {
+  await withPersistedFixture(
+    {
+      name: "issue-50-retry-existing-metadata",
+      outcome: "succeeded",
+      verificationSummary: "sanitized issue 50 initial success",
+    },
+    async ({ stateRoot, preparedContext, persisted }) => {
+      const originalStateFile = await readFile(persisted.statePath, "utf8");
+      const originalMetadataFile = await readFile(persisted.evidenceMetadataPaths[0], "utf8");
+      const plan = createRunRequestExecutionPlan(request);
+      const executorResult = await invokeLaneExecutor({
+        executor: createDeterministicLocalFakeExecutor(),
+        mode: "deterministic-local-fake",
+        plan,
+        preparedContext,
+        completedAt: "2026-05-01T00:00:07Z",
+        fixture: {
+          name: "issue-50-retry-existing-metadata",
+          outcome: "succeeded",
+          verificationSummary: "sanitized issue 50 retry",
+        },
+      });
+
+      await assert.rejects(
+        () =>
+          persistLaneExecutorResult({
+            stateRoot,
+            plan,
+            preparedContext,
+            executorResult,
+            recordedAt: "2026-05-01T00:00:08Z",
+          }),
+        /EEXIST/,
+      );
+
+      assert.equal(await readFile(persisted.statePath, "utf8"), originalStateFile);
+      assert.equal(await readFile(persisted.evidenceMetadataPaths[0], "utf8"), originalMetadataFile);
+      assert.deepEqual(await readLaneRunState(stateRoot, persisted.state.id), persisted.state);
     },
   );
 });
@@ -347,7 +395,7 @@ test("cleans evidence metadata and lane-state path when persistence fails", asyn
       /Lane run state paths must not traverse symbolic links/,
     );
 
-    await assert.rejects(() => access(statePath), /ENOENT/);
+    assert.equal((await lstat(statePath)).isSymbolicLink(), true);
     await assert.rejects(() => access(evidenceMetadataPath), /ENOENT/);
     assert.equal(await readFile(outsideStatePath, "utf8"), "outside state must not be touched\n");
   } finally {
