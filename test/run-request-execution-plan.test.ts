@@ -22,7 +22,7 @@ type Mutable<T> = T extends readonly (infer Item)[]
 const runRequestFixtureRoot = path.join(
   "protocol-snapshots",
   "ensen-protocol",
-  "v0.1.0",
+  "v0.2.0",
   "fixtures",
   "run-request",
   "v1",

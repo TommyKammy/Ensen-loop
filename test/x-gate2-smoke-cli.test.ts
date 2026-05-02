@@ -14,7 +14,7 @@ const execFileAsync = promisify(execFile);
 const fixtureRoot = path.join(
   "protocol-snapshots",
   "ensen-protocol",
-  "v0.1.0",
+  "v0.2.0",
   "fixtures",
 );
 

@@ -45,6 +45,12 @@ against protocol `v0.2.0` before any operation is treated as available:
 | `evidenceReferences` | `supported` | May publish sanitized evidence-reference facts without raw evidence bodies, secrets, or host-local absolute paths. |
 | `idempotency` | `supported` | Required for execute intent before `submit` can be considered ready. |
 
+The copied protocol snapshot includes public-safe capability variant examples at
+`protocol-snapshots/ensen-protocol/v0.2.0/fixtures/capability-variants/v1/valid/`.
+Those examples are `eip.capability-variant.example.v1` guidance for provider
+boundary checks; they do not rename RunRequest, RunStatusSnapshot, RunResult, or
+EvidenceBundleRef artifacts to `v2`.
+
 Dry-run remains the default Codex intent. It describes the adapter invocation and
 records capability evidence without starting a Codex session. Execute intent is a
 separate guarded fact surface; it is still represented without starting a

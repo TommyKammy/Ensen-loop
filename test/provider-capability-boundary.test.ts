@@ -51,7 +51,7 @@ test("keeps lane and run-request capability output stable after attempted vocabu
   const request = parseRunRequest(
     JSON.parse(
       await readFile(
-        "protocol-snapshots/ensen-protocol/v0.1.0/fixtures/run-request/v1/valid/github-issue-request.json",
+        "protocol-snapshots/ensen-protocol/v0.2.0/fixtures/run-request/v1/valid/github-issue-request.json",
         "utf8",
       ),
     ) as unknown,
@@ -103,5 +103,11 @@ test("documents Phase 4 provider boundaries without making initial adapters core
   assert.match(providerDocs, /GitLab/i);
   assert.match(providerDocs, /OpenCode/i);
   assert.match(providerDocs, /Claude Code/i);
+  assert.match(
+    providerDocs,
+    /protocol-snapshots\/ensen-protocol\/v0\.2\.0\/fixtures\/capability-variants\/v1\/valid\//,
+  );
+  assert.match(providerDocs, /eip\.capability-variant\.example\.v1/);
+  assert.match(providerDocs, /do not rename RunRequest, RunStatusSnapshot, RunResult, or\s+EvidenceBundleRef artifacts to `v2`/);
   assert.doesNotMatch(providerDocs, /Ensen-flow checkout|Ensen-flow service|Ensen-flow package/i);
 });

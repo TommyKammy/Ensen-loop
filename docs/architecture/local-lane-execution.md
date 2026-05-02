@@ -8,8 +8,10 @@ production automation claim.
 The contract preserves the Ensen-loop vocabulary from the Phase 1 core model:
 Work Item, Lane Run, Lane Journal, Durable State, Agent Provider, SCM Provider,
 Verification Result, Review Event, and Evidence Bundle. It maps those terms to
-the copied Ensen-protocol v0.1.0 RunRequest v1, RunStatusSnapshot, RunResult,
-and EvidenceBundleRef shapes without widening those protocol schemas.
+the copied Ensen-protocol v0.2.0 RunRequest v1, RunStatusSnapshot, RunResult,
+and EvidenceBundleRef shapes without widening those protocol schemas. Protocol
+release `v0.2.0` is the copied release lineage; the active EIP artifacts remain
+`eip.*.v1` schemas.
 
 ## Boundary
 
