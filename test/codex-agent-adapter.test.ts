@@ -74,6 +74,19 @@ test("separates guarded Codex execute intent from dry-run preview", () => {
   assert.deepEqual(intent.diagnostics, []);
 });
 
+test("allows repo-relative workspace names that contain literal double-dot text", () => {
+  const intent = createCodexAgentInvocationIntent({
+    capabilityEvidence,
+    workspace: {
+      kind: "repo-relative",
+      path: "fixtures/v1..legacy",
+    },
+  });
+
+  assert.equal(intent.ok, true);
+  assert.deepEqual(intent.diagnostics, []);
+});
+
 test("requires authoritative capability support before status or cancellation operations", () => {
   assert.deepEqual(requireCodexProviderOperation(capabilityEvidence, "status"), {
     ok: false,
@@ -96,7 +109,7 @@ test("sanitizes Codex boundary diagnostics instead of echoing unsafe local input
     capabilityEvidence,
     workspace: {
       kind: "repo-relative",
-      path: "/Users/example/project",
+      path: "../secret/../../etc/passwd",
     },
     allowedExecutionPosture: "execute-enabled",
     scope: {
@@ -113,7 +126,7 @@ test("sanitizes Codex boundary diagnostics instead of echoing unsafe local input
   const diagnostics = intent.diagnostics.join("\n");
 
   assert.equal(intent.ok, false);
-  assert.doesNotMatch(diagnostics, /\/Users\/example\/project/);
+  assert.doesNotMatch(diagnostics, /\.\.\/secret/);
   assert.doesNotMatch(diagnostics, /\bTODO\b/);
   assert.match(diagnostics, /repo-relative path without traversal/i);
   assert.match(diagnostics, /idempotency binding/i);

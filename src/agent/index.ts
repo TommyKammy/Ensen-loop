@@ -154,7 +154,7 @@ function validateCommonBoundary(input: CreateCodexAgentInvocationIntentInput): s
   } else if (
     input.workspace.kind !== "repo-relative" ||
     !repoRelativeWorkspacePattern.test(input.workspace.path) ||
-    input.workspace.path.includes("..")
+    input.workspace.path.split("/").some((segment) => segment === "..")
   ) {
     diagnostics.push("Codex adapter workspace must be a repo-relative path without traversal.");
   }
