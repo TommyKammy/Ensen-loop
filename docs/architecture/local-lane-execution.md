@@ -85,6 +85,24 @@ not start an agent, create SCM state, mutate GitHub, or delete unrelated files.
 Examples should use placeholders such as `<workspace-root>`, `<state-root>`,
 `<run-request-json-file>`, and `<supervisor-config-path>`.
 
+`planBranchLaneRunSkeleton()` is the dry-run-first Phase 3 helper for
+branch/worktree lane intent. It accepts one ready Work Item, one lane run id, one
+idempotency key, explicit `<repository-root>`, `<worktree-root>`, and
+`<state-root>` paths, an owner-controlled branch name, and an authoritative
+repository scope record. The default mode describes the intended branch,
+worktree path, state file path, idempotency fact, and provider non-actions
+without creating branch, worktree, change request, agent session, or local
+provider state.
+
+Prepare mode is explicit. It creates only the Ensen-loop local lane workspace
+and state directories, writes a queued LaneRunState, and records branch intent,
+repository scope, idempotency, and cleanup facts in the Lane Journal. It still
+does not call Git, create a branch, create a Git worktree, open a change request,
+or start an agent. If state persistence fails after local preparation, the
+helper removes the prepared lane workspace and state directory for that lane id
+and leaves unrelated files untouched. Later cleanup can use the journal cleanup
+fact and the lane id to remove the prepared local workspace and state directory.
+
 ## State Transitions
 
 LaneRunState is the authoritative lifecycle record for local lane execution.
