@@ -174,6 +174,8 @@ test("emits patch artifact metadata tied to completed lane state without raw evi
 
 test("rejects generic local absolute paths in public artifact metadata without echoing raw values", () => {
   const unsafePublicPaths = [
+    posixRootPath("tmp"),
+    posixRootPath("var"),
     posixRootPath("var", "folders", "private-output.log"),
     posixRootPath("tmp", "private-output.log"),
     windowsDrivePath("Temp", "private-output.log"),
