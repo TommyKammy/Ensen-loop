@@ -26,6 +26,7 @@ const runnableInput: IssueReadinessInput = {
     scopeItems: ["Evaluate mapped WorkItem facts before worktree creation."],
     requestedCapabilities: ["work-item-readiness"],
     eipMajorVersion: 2,
+    terminalState: "open",
   },
 };
 
@@ -167,6 +168,65 @@ test("blocks oversized, unsupported-capability, and ambiguous terminal-state inp
   ]);
 });
 
+test("blocks missing terminal state before readiness can become runnable", () => {
+  const result = evaluateIssueReadiness({
+    ...runnableInput,
+    issue: {
+      acceptanceCriteria: runnableInput.issue?.acceptanceCriteria,
+      behaviorDeltas: runnableInput.issue?.behaviorDeltas,
+      scopeItems: runnableInput.issue?.scopeItems,
+      requestedCapabilities: runnableInput.issue?.requestedCapabilities,
+      eipMajorVersion: runnableInput.issue?.eipMajorVersion,
+    },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.runnable, false);
+  assert.deepEqual(result.diagnostics, [
+    {
+      category: "unknown_failure",
+      path: "issue.terminalState",
+      message: "Issue terminal state is ambiguous or not open for readiness evaluation.",
+      severity: "blocker",
+    },
+  ]);
+});
+
+test("blocks generic absolute local paths in public issue text without echoing them", () => {
+  const posixPath = ["", "tmp", "build", "output.log"].join("/");
+  const windowsDrivePath = ["D:", "agent", "work", "repo"].join("\\");
+  const uncPath = ["", "", "agent-share", "work", "repo"].join("\\");
+  const result = evaluateIssueReadiness({
+    ...runnableInput,
+    issue: {
+      ...runnableInput.issue,
+      bodyText: [
+        "Collect output from",
+        posixPath,
+        windowsDrivePath,
+        uncPath,
+        "before starting the lane.",
+      ].join(" "),
+    },
+  });
+
+  assert.equal(result.status, "blocked");
+  assert.equal(result.runnable, false);
+  assert.deepEqual(result.diagnostics, [
+    {
+      category: "evidence_unavailable",
+      path: "issue.bodyText",
+      message: "Issue readiness input contains unsafe or secret-like evidence.",
+      severity: "blocker",
+    },
+  ]);
+
+  const diagnosticText = JSON.stringify(result.diagnostics);
+  assert.doesNotMatch(diagnosticText, new RegExp(escapeRegExp(posixPath)));
+  assert.doesNotMatch(diagnosticText, new RegExp(escapeRegExp(windowsDrivePath)));
+  assert.doesNotMatch(diagnosticText, new RegExp(escapeRegExp(uncPath)));
+});
+
 test("routes ambiguous or underspecified issues to human refinement", () => {
   const result = evaluateIssueReadiness({
     ...runnableInput,
@@ -208,3 +268,7 @@ test("documents readiness as provider-neutral diagnostics without terminal proto
   assert.doesNotMatch(docs, /\/Users\/[^/\s]+/);
   assert.doesNotMatch(docs, /[A-Za-z]:\\Users\\/);
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}

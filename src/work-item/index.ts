@@ -89,7 +89,7 @@ const localWorkItemStatuses = new Set<unknown>([
 const defaultReadinessCapabilities = Object.freeze(["work-item-readiness"] as const);
 const defaultSupportedEipMajorVersions = Object.freeze([2] as const);
 const workstationLocalPathPattern =
-  /(?:\/Users\/[^/\s]+|\/home\/[^/\s]+|[A-Za-z]:\\Users\\[^\\\s]+)/;
+  /(?:^|[\s([{"'`:=<])(?:\/(?!\/)\S+|[A-Za-z]:[\\/]\S+|\\\\\S+)/;
 const secretLikeTextPattern =
   /\b(?:token|secret|password|authorization|api[_-]?key)\b\s*[:=]\s*\S+/i;
 
@@ -435,7 +435,7 @@ function validateTerminalState(
   issue: IssueReadinessFacts,
   diagnostics: IssueReadinessDiagnostic[],
 ): void {
-  if (issue.terminalState !== undefined && issue.terminalState !== "open") {
+  if (issue.terminalState !== "open") {
     diagnostics.push({
       category: "unknown_failure",
       path: "issue.terminalState",
