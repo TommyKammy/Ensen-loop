@@ -22,6 +22,7 @@ export type WorkItemValidationResult = WorkItemValidationSuccess | WorkItemValid
 export type IssueReadinessStatus = "runnable" | "blocked" | "needs-human-refinement";
 
 export type IssueReadinessDiagnosticCategory =
+  | "readiness_info"
   | "validation_failure"
   | "unsupported_capability"
   | "provider_rejection_before_run_binding"
@@ -201,7 +202,7 @@ export function evaluateIssueReadiness(input: IssueReadinessInput): IssueReadine
 
   if (status === "runnable") {
     diagnostics.push({
-      category: "validation_failure",
+      category: "readiness_info",
       path: "issue.behaviorDeltas",
       message: "Issue has one observable behavior delta.",
       severity: "info",

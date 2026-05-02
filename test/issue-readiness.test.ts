@@ -37,9 +37,13 @@ test("accepts EIP major version 1 for a bounded owner-controlled issue", () => {
   assert.equal(result.runnable, true);
   assert.equal(result.workItem.id, runnableInput.workItem.id);
   assert.equal(result.workItem.title, runnableInput.workItem.title);
+  assert.equal(
+    result.diagnostics.some((diagnostic) => diagnostic.category === "validation_failure"),
+    false,
+  );
   assert.deepEqual(result.diagnostics, [
     {
-      category: "validation_failure",
+      category: "readiness_info",
       path: "issue.behaviorDeltas",
       message: "Issue has one observable behavior delta.",
       severity: "info",
@@ -141,9 +145,13 @@ test("does not require an EIP major version before readiness can become runnable
 
   assert.equal(result.status, "runnable");
   assert.equal(result.runnable, true);
+  assert.equal(
+    result.diagnostics.some((diagnostic) => diagnostic.category === "validation_failure"),
+    false,
+  );
   assert.deepEqual(result.diagnostics, [
     {
-      category: "validation_failure",
+      category: "readiness_info",
       path: "issue.behaviorDeltas",
       message: "Issue has one observable behavior delta.",
       severity: "info",
