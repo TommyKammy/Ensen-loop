@@ -25,12 +25,12 @@ const runnableInput: IssueReadinessInput = {
     behaviorDeltas: ["Add issue readiness evaluation before lane execution."],
     scopeItems: ["Evaluate mapped WorkItem facts before worktree creation."],
     requestedCapabilities: ["work-item-readiness"],
-    eipMajorVersion: 2,
+    eipMajorVersion: 1,
     terminalState: "open",
   },
 };
 
-test("returns a runnable readiness result for a bounded owner-controlled issue", () => {
+test("accepts EIP major version 1 for a bounded owner-controlled issue", () => {
   const result = evaluateIssueReadiness(runnableInput);
 
   assert.equal(result.status, "runnable");
@@ -128,6 +128,27 @@ test("blocks unsupported EIP major versions without producing terminal protocol 
     },
   ]);
   assert.equal(result.boundary.emitsProtocolTerminalArtifact, false);
+});
+
+test("does not require an EIP major version before readiness can become runnable", () => {
+  const result = evaluateIssueReadiness({
+    ...runnableInput,
+    issue: {
+      ...runnableInput.issue,
+      eipMajorVersion: undefined,
+    },
+  });
+
+  assert.equal(result.status, "runnable");
+  assert.equal(result.runnable, true);
+  assert.deepEqual(result.diagnostics, [
+    {
+      category: "validation_failure",
+      path: "issue.behaviorDeltas",
+      message: "Issue has one observable behavior delta.",
+      severity: "info",
+    },
+  ]);
 });
 
 test("blocks oversized, unsupported-capability, and ambiguous terminal-state inputs", () => {

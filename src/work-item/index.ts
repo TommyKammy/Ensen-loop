@@ -87,7 +87,7 @@ const localWorkItemStatuses = new Set<unknown>([
   "failed",
 ]);
 const defaultReadinessCapabilities = Object.freeze(["work-item-readiness"] as const);
-const defaultSupportedEipMajorVersions = Object.freeze([2] as const);
+const defaultSupportedEipMajorVersions = Object.freeze([1] as const);
 const workstationLocalPathPattern =
   /(?:^|[\s([{"'`:=<])(?:\/(?!\/)\S+|[A-Za-z]:[\\/]\S+|\\\\\S+)/;
 const secretLikeTextPattern =

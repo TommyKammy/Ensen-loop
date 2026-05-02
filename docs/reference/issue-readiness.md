@@ -37,6 +37,11 @@ binding, unavailable evidence, unknown failure, and unsupported EIP major
 versions. These diagnostics are advisory inputs for a later lane boundary; they
 are not protocol terminal artifacts.
 
+The protocol snapshot version is separate from the EIP artifact schema family.
+The current released snapshot still uses `eip.*.v1` artifacts by default, so
+readiness accepts EIP major version `1` unless a caller supplies a narrower
+supported-major list. Unsupported future EIP majors continue to fail closed.
+
 ## Non-Goals
 
 - No automatic issue rewriting.
@@ -44,4 +49,3 @@ are not protocol terminal artifacts.
 - No protocol terminal artifact synthesis.
 - No automatic product, execution, or merge authority.
 - No dependency on Ensen-flow approval or workflow state.
-
