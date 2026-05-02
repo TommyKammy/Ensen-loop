@@ -34,6 +34,30 @@ test("CLI filesystem diagnostics redact local absolute path shapes", () => {
   assert.match(sanitized, /EBUSY: resource busy or locked, open '<local-path>'/);
 });
 
+test("CLI diagnostics redact secret-like values", () => {
+  const authHeader = "Authorization: Bearer ghp_1234567890abcdef";
+  const sessionCookie = "Cookie: sessionid=s3ssion-value; path=/";
+  const privateKeyMarker = "-----BEGIN OPENSSH PRIVATE KEY-----";
+  const apiKeyAssignment = "apiKey = sk-test-1234567890abcdef";
+  const message = [
+    `request failed with ${authHeader}`,
+    `adapter returned ${sessionCookie}`,
+    `fixture included ${privateKeyMarker}`,
+    `config contained ${apiKeyAssignment}`,
+  ].join("\n");
+
+  const sanitized = sanitizeCliErrorMessage(message);
+
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(authHeader)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(sessionCookie)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(privateKeyMarker)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(apiKeyAssignment)));
+  assert.match(sanitized, /request failed with <secret-like-value>/);
+  assert.match(sanitized, /adapter returned <secret-like-value>/);
+  assert.match(sanitized, /fixture included <secret-like-value>/);
+  assert.match(sanitized, /config contained <secret-like-value>/);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

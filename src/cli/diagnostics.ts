@@ -1,3 +1,5 @@
+import { sanitizePublicDiagnosticMessage } from "../safety/public-artifact.js";
+
 const localPathPlaceholder = "<local-path>";
 
 const quotedAbsolutePathPattern =
@@ -7,7 +9,7 @@ const windowsUncPathPattern = /\\\\[^\s"'\r\n]+/g;
 const posixAbsolutePathPattern = /(^|[\s(:])\/[^\s"'\r\n)]+/g;
 
 export function sanitizeCliErrorMessage(message: string): string {
-  return message
+  return sanitizePublicDiagnosticMessage(message)
     .replace(quotedAbsolutePathPattern, (_match, quote: string) => `${quote}${localPathPlaceholder}${quote}`)
     .replace(windowsDrivePathPattern, localPathPlaceholder)
     .replace(windowsUncPathPattern, localPathPlaceholder)
