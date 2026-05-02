@@ -77,12 +77,14 @@ const githubOwnerPattern = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
 const githubRepositoryPattern = /^[A-Za-z0-9._-]+$/;
 const secretLikeTopLevelKeys = new Set(["token", "authorization", "password", "secret"]);
 
+const executorCapabilitiesAdvertised = Object.freeze([] as readonly string[]);
+
 const githubPickupBoundary: GithubPickupBoundary = Object.freeze({
   capability: "work-item-pickup",
   readOnly: true,
   mutatesProvider: false,
   startsExecution: false,
-  executorCapabilitiesAdvertised: [],
+  executorCapabilitiesAdvertised,
   protocolRuntimeImported: false,
 });
 
@@ -264,10 +266,18 @@ function validateRequesterFacts(
 }
 
 function validateAllowlist(
-  allowlist: readonly GithubOwnerControlledRepository[],
+  allowlist: unknown,
   repository: GithubIssueRepositoryFacts | undefined,
   issues: GithubWorkItemPickupIssue[],
 ): void {
+  if (!Array.isArray(allowlist)) {
+    issues.push({
+      path: "allowlist",
+      message: "Owner-controlled repository allowlist is required and must be an array.",
+    });
+    return;
+  }
+
   let hasOwnerControlledMatch = false;
 
   allowlist.forEach((entry, index) => {

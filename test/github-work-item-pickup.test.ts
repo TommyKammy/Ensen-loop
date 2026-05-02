@@ -63,6 +63,20 @@ test("maps an allowed GitHub issue into provider-neutral WorkItem pickup facts",
   });
 });
 
+test("keeps advertised executor capabilities immutable at runtime", () => {
+  const result = pickupGithubIssueWorkItem({
+    allowlist,
+    issue: allowedIssue,
+  });
+
+  assert.equal(result.ok, true);
+  assert.equal(Object.isFrozen(result.boundary.executorCapabilitiesAdvertised), true);
+  assert.throws(() => {
+    (result.boundary.executorCapabilitiesAdvertised as unknown as string[]).push("submit");
+  }, TypeError);
+  assert.deepEqual(result.boundary.executorCapabilitiesAdvertised, []);
+});
+
 test("fails closed when the GitHub repository is not owner-controlled allowed scope", () => {
   const result = pickupGithubIssueWorkItem({
     allowlist,
@@ -157,6 +171,27 @@ test("fails closed when owner-controlled scope is missing from the allowlist ent
       message: "GitHub repository must be explicitly allowlisted as owner-controlled.",
     },
   ]);
+});
+
+test("fails closed when allowlist scope is missing or malformed", () => {
+  const missingResult = pickupGithubIssueWorkItem({
+    allowlist: undefined,
+    issue: allowedIssue,
+  } as unknown as Parameters<typeof pickupGithubIssueWorkItem>[0]);
+  const malformedResult = pickupGithubIssueWorkItem({
+    allowlist: {},
+    issue: allowedIssue,
+  } as unknown as Parameters<typeof pickupGithubIssueWorkItem>[0]);
+
+  assert.equal(missingResult.ok, false);
+  assert.deepEqual(missingResult.issues, [
+    {
+      path: "allowlist",
+      message: "Owner-controlled repository allowlist is required and must be an array.",
+    },
+  ]);
+  assert.equal(malformedResult.ok, false);
+  assert.deepEqual(malformedResult.issues, missingResult.issues);
 });
 
 test("documents GitHub pickup as read-only input collection without executor protocol claims", async () => {
