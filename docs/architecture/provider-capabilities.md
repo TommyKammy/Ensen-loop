@@ -37,7 +37,7 @@ against protocol `v0.2.0` before any operation is treated as available:
 
 | Operation | Support level | Boundary behavior |
 | --- | --- | --- |
-| `submit` | `supported` | May be planned as the execute-capable boundary only after explicit execute posture, repo-relative workspace, owner-controlled scope, and idempotency binding are present. |
+| `submit` | `supported` | May be planned as the execute-capable boundary only after explicit execute posture, repo-relative workspace, owner-controlled scope, idempotency binding, prior dry-run proof, and human operator approval are present. |
 | `status` | `partial` | Must fail closed for authoritative status polling; partial Codex observations are diagnostics, not RunStatusSnapshot truth. |
 | `cancel` | `unsupported` | Must fail closed and must not mark a lane run cancelled without an authoritative cancellation boundary. |
 | `fetchEvidence` | `partial` | May describe references or diagnostics, but must not claim durable evidence fetch support. |
@@ -51,10 +51,14 @@ Those examples are `eip.capability-variant.example.v1` guidance for provider
 boundary checks; they do not rename RunRequest, RunStatusSnapshot, RunResult, or
 EvidenceBundleRef artifacts to `v2`.
 
-Dry-run remains the default Codex intent. It describes the adapter invocation and
-records capability evidence without starting a Codex session. Execute intent is a
-separate guarded fact surface; it is still represented without starting a
-provider session until a later invocation layer owns that side effect.
+Dry-run remains the default Codex dogfood intent. It describes the adapter
+invocation and records capability evidence without starting a Codex session.
+Execute intent is a separate guarded fact surface; it is still represented
+without starting a provider session until a later invocation layer owns that side
+effect. Execute-capable dogfood input fails closed unless it carries an explicit
+prior dry-run proof and a human operator approval point. The boundary records
+that merge support is absent and merge authority remains human-only; patch
+output or PR draft intent must not be interpreted as merge readiness.
 
 Dogfood execute-capable lanes require a local owner-controlled repository
 allowlist match before any non-dry-run preparation can mutate local lane
