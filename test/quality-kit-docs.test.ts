@@ -113,3 +113,37 @@ test("documents the Phase 3 local lane execution contract", async () => {
     /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
   );
 });
+
+test("documents dogfood rollback and cleanup boundaries", async () => {
+  const runbook = await readMarkdown("docs/runbooks/dogfood-rollback-cleanup.md");
+
+  for (const term of [
+    "failed",
+    "blocked",
+    "no-op",
+    "retryable",
+    "discard",
+    "manual repair",
+    "abandon",
+    "worktree",
+    "branch",
+    "patch artifact",
+    "lane state",
+    "journal",
+    "evidence",
+    "operator confirmation",
+  ]) {
+    assert.match(runbook, new RegExp(term, "i"));
+  }
+
+  assert.match(runbook, /CODEX_SUPERVISOR_CONFIG/);
+  assert.match(runbook, /<supervisor-config-path>/);
+  assert.doesNotMatch(
+    runbook,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+  assert.doesNotMatch(
+    runbook,
+    /customer|regulated|ERPNext|electronic signature|batch release|final disposition/i,
+  );
+});
