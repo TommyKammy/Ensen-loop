@@ -30,6 +30,26 @@ Core lane logic may decide that a Lane Run needs dry-run or execute capability.
 It must not start provider sessions, shell out to provider commands, or encode
 provider-specific command arguments as core model vocabulary.
 
+## Codex AgentProvider Boundary
+
+The Phase 4 Codex adapter boundary publishes operation-level capability evidence
+against protocol `v0.2.0` before any operation is treated as available:
+
+| Operation | Support level | Boundary behavior |
+| --- | --- | --- |
+| `submit` | `supported` | May be planned as the execute-capable boundary only after explicit execute posture, repo-relative workspace, owner-controlled scope, and idempotency binding are present. |
+| `status` | `partial` | Must fail closed for authoritative status polling; partial Codex observations are diagnostics, not RunStatusSnapshot truth. |
+| `cancel` | `unsupported` | Must fail closed and must not mark a lane run cancelled without an authoritative cancellation boundary. |
+| `fetchEvidence` | `partial` | May describe references or diagnostics, but must not claim durable evidence fetch support. |
+| `polling` | `partial` | Must not fabricate polling support or infer lifecycle state from Codex naming or operator text. |
+| `evidenceReferences` | `supported` | May publish sanitized evidence-reference facts without raw evidence bodies, secrets, or host-local absolute paths. |
+| `idempotency` | `supported` | Required for execute intent before `submit` can be considered ready. |
+
+Dry-run remains the default Codex intent. It describes the adapter invocation and
+records capability evidence without starting a Codex session. Execute intent is a
+separate guarded fact surface; it is still represented without starting a
+provider session until a later invocation layer owns that side effect.
+
 ## Dogfood Adapter Positions
 
 The first dogfood slice can use a GitHub adapter for SCMProvider behavior and a
