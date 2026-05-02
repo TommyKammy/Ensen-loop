@@ -160,6 +160,27 @@ test("requires an owner-controlled dogfood repo allowlist before prepare mutatio
     await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
 
+    const mismatchedAllowlistDryRun = await planBranchLaneRunSkeleton({
+      workItem: readyWorkItem,
+      laneRunId: "run_dogfood_mismatch_dry_run",
+      idempotencyKey: "issue-81-dogfood-mismatch-dryrun",
+      repositoryRoot: roots.repositoryRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-81",
+      authoritativeScope: allowedScope,
+      dogfoodRepositoryAllowlist: [
+        {
+          ...allowlist[0],
+          ownerIdentity: "different-owner",
+        },
+      ],
+    });
+
+    assert.equal(mismatchedAllowlistDryRun.mode, "dry-run");
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
+
     await assert.rejects(
       () =>
         planBranchLaneRunSkeleton({
@@ -205,6 +226,46 @@ test("requires an owner-controlled dogfood repo allowlist before prepare mutatio
 
     await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+test("allows adapter-agnostic https repository URLs for prepare allowlist matching", async () => {
+  const roots = await createSkeletonRoots();
+  const repositoryUrl = "https://github.enterprise.example/scm/TommyKammy/Ensen-loop";
+
+  try {
+    const skeleton = await planBranchLaneRunSkeleton({
+      mode: "prepare",
+      workItem: readyWorkItem,
+      laneRunId: "run_dogfood_enterprise_url",
+      idempotencyKey: "issue-81-dogfood-enterprise-url",
+      repositoryRoot: roots.repositoryRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-81-enterprise-url",
+      authoritativeScope: {
+        ownerControlled: true,
+        ownerIdentity: "owner-maintainer",
+        repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+        repositorySlug: "TommyKammy/Ensen-loop",
+        repositoryUrl,
+        repositoryRoot: roots.repositoryRoot,
+      },
+      dogfoodRepositoryAllowlist: [
+        {
+          ownerControlled: true,
+          ownerIdentity: "owner-maintainer",
+          repositorySlug: "TommyKammy/Ensen-loop",
+          repositoryUrl,
+          repositoryRoot: roots.repositoryRoot,
+        },
+      ],
+    });
+
+    assert.equal(skeleton.mode, "prepare");
+    assert.equal(skeleton.repository.url, repositoryUrl);
   } finally {
     await roots.cleanup();
   }

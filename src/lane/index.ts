@@ -304,12 +304,12 @@ export async function planBranchLaneRunSkeleton(
     await assertRepositoryRootAllowlisted(repositoryRoot.realPath, input.allowedRepositoryRoots);
   }
 
-  if (mode === "prepare" || input.dogfoodRepositoryAllowlist !== undefined) {
+  if (mode === "prepare") {
     await assertDogfoodRepositoryAllowlisted({
       scope,
       repositoryRealPath: repositoryRoot.realPath,
       allowlist: input.dogfoodRepositoryAllowlist,
-      required: mode === "prepare",
+      required: true,
     });
   }
 
@@ -689,7 +689,7 @@ function collectDogfoodScopeIssues(scope: AuthoritativeLaneRunScope): string[] {
     issues.push("repositorySlug");
   }
 
-  if (!isGithubRepositoryUrl(scope.repositoryUrl, scope.repositorySlug)) {
+  if (!isRepositoryUrl(scope.repositoryUrl)) {
     issues.push("repositoryUrl");
   }
 
@@ -723,7 +723,7 @@ function collectDogfoodAllowlistEntryIssues(
       issues.push(`allowlist[${index}].repositorySlug`);
     }
 
-    if (!isGithubRepositoryUrl(entry.repositoryUrl, entry.repositorySlug)) {
+    if (!isRepositoryUrl(entry.repositoryUrl)) {
       issues.push(`allowlist[${index}].repositoryUrl`);
     }
 
@@ -735,8 +735,16 @@ function collectDogfoodAllowlistEntryIssues(
   return issues;
 }
 
-function isGithubRepositoryUrl(value: unknown, repositorySlug: string): value is string {
-  return typeof value === "string" && value === `https://github.com/${repositorySlug}`;
+function isRepositoryUrl(value: unknown): value is string {
+  if (typeof value !== "string" || value.length === 0) {
+    return false;
+  }
+
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 
 async function resolveCanonicalRepositoryRoot(rootPath: string): Promise<CanonicalLocalLaneRoot> {
