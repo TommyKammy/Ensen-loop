@@ -92,8 +92,18 @@ export type BranchLaneRunSkeletonMode = "dry-run" | "prepare";
 
 export interface AuthoritativeLaneRunScope {
   readonly ownerControlled: true;
+  readonly ownerIdentity?: string;
   readonly repositoryId: string;
   readonly repositorySlug: string;
+  readonly repositoryUrl?: string;
+  readonly repositoryRoot: string;
+}
+
+export interface OwnerControlledDogfoodRepositoryAllowlistEntry {
+  readonly ownerControlled: true;
+  readonly ownerIdentity: string;
+  readonly repositorySlug: string;
+  readonly repositoryUrl: string;
   readonly repositoryRoot: string;
 }
 
@@ -109,6 +119,7 @@ export interface PlanBranchLaneRunSkeletonInput {
   readonly baseBranch?: string;
   readonly authoritativeScope?: AuthoritativeLaneRunScope;
   readonly allowedRepositoryRoots?: readonly string[];
+  readonly dogfoodRepositoryAllowlist?: readonly OwnerControlledDogfoodRepositoryAllowlistEntry[];
   readonly recordedAt?: string;
 }
 
@@ -123,6 +134,8 @@ export interface BranchLaneRunSkeleton {
   readonly repository: {
     readonly id: string;
     readonly slug: string;
+    readonly url?: string;
+    readonly ownerIdentity?: string;
   };
   readonly branch: {
     readonly name: string;
@@ -291,6 +304,15 @@ export async function planBranchLaneRunSkeleton(
     await assertRepositoryRootAllowlisted(repositoryRoot.realPath, input.allowedRepositoryRoots);
   }
 
+  if (mode === "prepare" || input.dogfoodRepositoryAllowlist !== undefined) {
+    await assertDogfoodRepositoryAllowlisted({
+      scope,
+      repositoryRealPath: repositoryRoot.realPath,
+      allowlist: input.dogfoodRepositoryAllowlist,
+      required: mode === "prepare",
+    });
+  }
+
   const worktreeRoot = await resolveCanonicalLocalLaneRoot("workspace", input.worktreeRoot);
   const stateRoot = await resolveCanonicalLocalLaneRoot("state", input.stateRoot);
 
@@ -311,6 +333,8 @@ export async function planBranchLaneRunSkeleton(
     repository: {
       id: scope.repositoryId,
       slug: scope.repositorySlug,
+      url: scope.repositoryUrl,
+      ownerIdentity: scope.ownerIdentity,
     },
     branch: {
       name: input.branchName,
@@ -367,6 +391,12 @@ export async function planBranchLaneRunSkeleton(
           recordedAt,
           kind: "hypothesis",
           message: `authoritative scope: ${scope.repositorySlug} ${scope.repositoryId}`,
+        },
+        {
+          id: `${laneRunId}-dogfood-allowlist`,
+          recordedAt,
+          kind: "hypothesis",
+          message: `dogfood allowlist matched: ${scope.repositorySlug} ownerIdentity=${scope.ownerIdentity ?? "<missing>"}`,
         },
         {
           id: `${laneRunId}-branch`,
@@ -598,6 +628,115 @@ async function assertRepositoryRootAllowlisted(
   }
 
   throw new Error("Repository root is not allowlisted for lane skeleton planning.");
+}
+
+async function assertDogfoodRepositoryAllowlisted(input: {
+  readonly scope: AuthoritativeLaneRunScope;
+  readonly repositoryRealPath: string;
+  readonly allowlist?: readonly OwnerControlledDogfoodRepositoryAllowlistEntry[];
+  readonly required: boolean;
+}): Promise<void> {
+  if (!Array.isArray(input.allowlist)) {
+    if (input.required) {
+      throw new Error("Owner-controlled dogfood repository allowlist is required before prepare mutation.");
+    }
+
+    return;
+  }
+
+  const scopeIssues = collectDogfoodScopeIssues(input.scope);
+  if (scopeIssues.length > 0) {
+    throw new Error(`Dogfood repository scope is missing or malformed: ${scopeIssues.join(", ")}.`);
+  }
+
+  const entryIssues = collectDogfoodAllowlistEntryIssues(input.allowlist);
+  if (entryIssues.length > 0) {
+    throw new Error(`Dogfood repository allowlist is malformed: ${entryIssues.join(", ")}.`);
+  }
+
+  for (const entry of input.allowlist) {
+    if (
+      entry.ownerControlled === true &&
+      entry.ownerIdentity === input.scope.ownerIdentity &&
+      entry.repositorySlug === input.scope.repositorySlug &&
+      entry.repositoryUrl === input.scope.repositoryUrl
+    ) {
+      const allowed = await resolveCanonicalRepositoryRoot(entry.repositoryRoot);
+
+      if (allowed.realPath === input.repositoryRealPath) {
+        return;
+      }
+    }
+  }
+
+  throw new Error(
+    "Dogfood repository allowlist match is required before prepare mutation; mismatched fields may include ownerIdentity, repositorySlug, repositoryUrl, or repositoryRoot.",
+  );
+}
+
+function collectDogfoodScopeIssues(scope: AuthoritativeLaneRunScope): string[] {
+  const issues: string[] = [];
+
+  if (scope.ownerControlled !== true) {
+    issues.push("ownerControlled");
+  }
+
+  if (!isNonEmptyString(scope.ownerIdentity)) {
+    issues.push("ownerIdentity");
+  }
+
+  if (!repositorySlugPattern.test(scope.repositorySlug)) {
+    issues.push("repositorySlug");
+  }
+
+  if (!isGithubRepositoryUrl(scope.repositoryUrl, scope.repositorySlug)) {
+    issues.push("repositoryUrl");
+  }
+
+  if (!isNonEmptyString(scope.repositoryRoot)) {
+    issues.push("repositoryRoot");
+  }
+
+  return issues;
+}
+
+function collectDogfoodAllowlistEntryIssues(
+  allowlist: readonly OwnerControlledDogfoodRepositoryAllowlistEntry[],
+): string[] {
+  const issues: string[] = [];
+
+  allowlist.forEach((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      issues.push(`allowlist[${index}]`);
+      return;
+    }
+
+    if (entry.ownerControlled !== true) {
+      issues.push(`allowlist[${index}].ownerControlled`);
+    }
+
+    if (!isNonEmptyString(entry.ownerIdentity)) {
+      issues.push(`allowlist[${index}].ownerIdentity`);
+    }
+
+    if (!repositorySlugPattern.test(entry.repositorySlug)) {
+      issues.push(`allowlist[${index}].repositorySlug`);
+    }
+
+    if (!isGithubRepositoryUrl(entry.repositoryUrl, entry.repositorySlug)) {
+      issues.push(`allowlist[${index}].repositoryUrl`);
+    }
+
+    if (!isNonEmptyString(entry.repositoryRoot)) {
+      issues.push(`allowlist[${index}].repositoryRoot`);
+    }
+  });
+
+  return issues;
+}
+
+function isGithubRepositoryUrl(value: unknown, repositorySlug: string): value is string {
+  return typeof value === "string" && value === `https://github.com/${repositorySlug}`;
 }
 
 async function resolveCanonicalRepositoryRoot(rootPath: string): Promise<CanonicalLocalLaneRoot> {

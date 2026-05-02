@@ -56,6 +56,13 @@ records capability evidence without starting a Codex session. Execute intent is 
 separate guarded fact surface; it is still represented without starting a
 provider session until a later invocation layer owns that side effect.
 
+Dogfood execute-capable lanes require a local owner-controlled repository
+allowlist match before any non-dry-run preparation can mutate local lane
+workspace or state directories. That execution allowlist binds owner identity,
+repository slug, repository URL, and `<repository-root>` as one owner-controlled
+record. The GitHub WorkItem pickup allowlist remains read-only provenance for
+issue normalization; it does not authorize execution by itself.
+
 ## Dogfood Adapter Positions
 
 The first dogfood slice can use a GitHub adapter for SCMProvider behavior and a

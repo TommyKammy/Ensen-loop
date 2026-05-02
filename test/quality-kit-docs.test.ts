@@ -103,6 +103,9 @@ test("documents the Phase 3 local lane execution contract", async () => {
     "workspace root",
     "state root",
     "ambiguous executor outcome",
+    "dogfood repository allowlist",
+    "GitHub WorkItem pickup",
+    "not execution authority by itself",
   ]) {
     assert.match(contract, new RegExp(phrase, "i"));
   }

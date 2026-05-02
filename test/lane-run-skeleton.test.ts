@@ -31,10 +31,13 @@ test("dry-runs a deterministic branch/worktree lane skeleton without filesystem 
       branchName: "codex/issue-58",
       authoritativeScope: {
         ownerControlled: true,
+        ownerIdentity: "owner-maintainer",
         repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
         repositorySlug: "TommyKammy/Ensen-loop",
+        repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
         repositoryRoot: roots.repositoryRoot,
       },
+      dogfoodRepositoryAllowlist: dogfoodAllowlist(roots.repositoryRoot),
     });
 
     assert.equal(skeleton.mode, "dry-run");
@@ -78,10 +81,13 @@ test("prepares a local skeleton tied to lane id, branch intent, scope, and resta
       baseBranch: "main",
       authoritativeScope: {
         ownerControlled: true,
+        ownerIdentity: "owner-maintainer",
         repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
         repositorySlug: "TommyKammy/Ensen-loop",
+        repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
         repositoryRoot: roots.repositoryRoot,
       },
+      dogfoodRepositoryAllowlist: dogfoodAllowlist(roots.repositoryRoot),
     });
 
     assert.equal(skeleton.mode, "prepare");
@@ -111,6 +117,94 @@ test("prepares a local skeleton tied to lane id, branch intent, scope, and resta
         .then((value) => JSON.parse(value).laneRunId),
       skeleton.laneRunId,
     );
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+test("requires an owner-controlled dogfood repo allowlist before prepare mutation", async () => {
+  const roots = await createSkeletonRoots();
+  const allowedScope = {
+    ownerControlled: true,
+    ownerIdentity: "owner-maintainer",
+    repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+    repositorySlug: "TommyKammy/Ensen-loop",
+    repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
+    repositoryRoot: roots.repositoryRoot,
+  } as const;
+  const allowlist = [
+    {
+      ownerControlled: true,
+      ownerIdentity: "owner-maintainer",
+      repositorySlug: "TommyKammy/Ensen-loop",
+      repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
+      repositoryRoot: roots.repositoryRoot,
+    },
+  ] as const;
+
+  try {
+    const dryRun = await planBranchLaneRunSkeleton({
+      workItem: readyWorkItem,
+      laneRunId: "run_dogfood_allowlisted_dry_run",
+      idempotencyKey: "issue-81-dogfood-allow-dryrun",
+      repositoryRoot: roots.repositoryRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-81",
+      authoritativeScope: allowedScope,
+      dogfoodRepositoryAllowlist: allowlist,
+    });
+
+    assert.equal(dryRun.mode, "dry-run");
+    assert.equal(dryRun.repository.slug, "TommyKammy/Ensen-loop");
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_dogfood_missing_allowlist",
+          idempotencyKey: "issue-81-dogfood-missing-list",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-81",
+          authoritativeScope: allowedScope,
+        }),
+      /dogfood repository allowlist is required/,
+    );
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_dogfood_wrong_owner",
+          idempotencyKey: "issue-81-dogfood-wrong-owner",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-81",
+          authoritativeScope: {
+            ...allowedScope,
+            ownerIdentity: "flow-approval",
+          },
+          dogfoodRepositoryAllowlist: allowlist,
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /ownerIdentity/);
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(roots.repositoryRoot)));
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(roots.worktreeRoot)));
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(roots.stateRoot)));
+        return true;
+      },
+    );
+
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
   } finally {
     await roots.cleanup();
   }
@@ -240,10 +334,13 @@ test("preserves pre-existing local skeleton directories when state persistence f
           branchName: "codex/issue-58-existing-fail",
           authoritativeScope: {
             ownerControlled: true,
+            ownerIdentity: "owner-maintainer",
             repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
             repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
             repositoryRoot: roots.repositoryRoot,
           },
+          dogfoodRepositoryAllowlist: dogfoodAllowlist(roots.repositoryRoot),
         }),
       /Lane run state file path must be a regular file/,
     );
@@ -280,4 +377,20 @@ async function createSkeletonRoots(): Promise<{
       await rm(root, { recursive: true, force: true });
     },
   };
+}
+
+function dogfoodAllowlist(repositoryRoot: string) {
+  return [
+    {
+      ownerControlled: true,
+      ownerIdentity: "owner-maintainer",
+      repositorySlug: "TommyKammy/Ensen-loop",
+      repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
+      repositoryRoot,
+    },
+  ] as const;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
