@@ -122,7 +122,7 @@ const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const secretPattern =
   /(?:password|passwd|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s"'`<>]+/i;
 const workstationLocalPathPattern =
-  /(?:^|[\s"'([{<>=])(?:\/Users\/[^/\s"'`<>]+|\/home\/[^/\s"'`<>]+|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:\\Users\\[^\\\s"'`<>]+)/i;
+  /(?:^|[\s"'([{<>=])(?:\/(?!\/)(?:[A-Za-z0-9._~@-]+\/)+[A-Za-z0-9._~@-]+|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:[\\/][^"'`<>\s]+|\\\\[^"'`<>\s\\]+\\[^"'`<>\s\\]+(?:\\[^"'`<>\s\\]+)*)/i;
 
 export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): LaneArtifactOutput {
   const issues = collectCreateLaneArtifactOutputIssues(input);
