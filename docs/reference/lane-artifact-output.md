@@ -14,6 +14,12 @@ references. A lane run must be completed before artifact output is emitted.
 Status snapshots, provider prose, retries, timeout summaries, or operator text
 must not be used to synthesize a terminal artifact.
 
+For execute-capable dogfood lanes, AgentProvider metadata carries the
+dry-run-first precondition summary: dry-run proof required, proof provided,
+human operator approval provided, merge unsupported, and merge authority
+human-only. This metadata explains the approval boundary for reviewers; it does
+not grant merge authority.
+
 Artifact paths are public review metadata. They must stay repo-relative under
 `artifacts/`, avoid traversal, and avoid raw secrets or workstation-local
 absolute paths. Public artifact output must not embed raw evidence bodies,

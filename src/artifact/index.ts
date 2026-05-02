@@ -74,6 +74,7 @@ export interface LaneArtifactOutput {
     readonly mode: CodexAgentInvocationIntent["mode"];
     readonly outcome: CodexAgentInvocationIntent["outcome"];
     readonly startsProviderSession: false;
+    readonly executionPreconditions: CodexAgentInvocationIntent["executionPreconditions"];
   };
   readonly verificationIntent: LaneArtifactVerificationIntent;
   readonly capabilityEvidence: CodexAgentProviderCapabilityEvidence;
@@ -150,6 +151,7 @@ export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): 
       mode: input.agentOutcome.mode,
       outcome: input.agentOutcome.outcome,
       startsProviderSession: input.agentOutcome.invocation.startsProviderSession,
+      executionPreconditions: input.agentOutcome.executionPreconditions,
     },
     verificationIntent: {
       commands: [...input.verificationIntent.commands],
@@ -311,6 +313,8 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
     });
   }
 
+  collectAgentProviderIssues(issues, value.agentProvider);
+
   if (
     !isRecord(value.humanReview) ||
     value.humanReview.required !== true ||
@@ -357,6 +361,45 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
   }
 
   return issues;
+}
+
+function collectAgentProviderIssues(
+  issues: LaneArtifactOutputValidationIssue[],
+  agentProvider: unknown,
+): void {
+  if (
+    !isRecord(agentProvider) ||
+    agentProvider.startsProviderSession !== false ||
+    (agentProvider.mode !== "dry-run" && agentProvider.mode !== "execute") ||
+    (agentProvider.outcome !== "planned" &&
+      agentProvider.outcome !== "ready-to-invoke" &&
+      agentProvider.outcome !== "blocked") ||
+    !isRecord(agentProvider.executionPreconditions) ||
+    agentProvider.executionPreconditions.dryRunRequired !== true ||
+    (agentProvider.executionPreconditions.dryRunProof !== "provided" &&
+      agentProvider.executionPreconditions.dryRunProof !== "missing") ||
+    (agentProvider.executionPreconditions.operatorApproval !== "provided" &&
+      agentProvider.executionPreconditions.operatorApproval !== "missing") ||
+    agentProvider.executionPreconditions.mergeSupported !== false ||
+    agentProvider.executionPreconditions.mergeAuthority !== "human-only"
+  ) {
+    issues.push({
+      path: "agentProvider",
+      message: "Lane artifact output must preserve dry-run-first and human-only merge preconditions.",
+    });
+    return;
+  }
+
+  if (
+    agentProvider.mode === "execute" &&
+    (agentProvider.executionPreconditions.dryRunProof !== "provided" ||
+      agentProvider.executionPreconditions.operatorApproval !== "provided")
+  ) {
+    issues.push({
+      path: "agentProvider.executionPreconditions",
+      message: "Execute-capable artifact metadata requires dry-run proof and human operator approval.",
+    });
+  }
 }
 
 function collectBranchIssues(

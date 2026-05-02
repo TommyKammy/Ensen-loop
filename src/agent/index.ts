@@ -38,6 +38,20 @@ export interface CodexAgentIdempotencyBinding {
   readonly scopeFingerprint: string;
 }
 
+export interface CodexAgentDryRunProof {
+  readonly mode: "dry-run";
+  readonly outcome: "planned";
+  readonly requestId: string;
+  readonly correlationId: string;
+  readonly completedAt: string;
+}
+
+export interface CodexAgentOperatorApprovalPoint {
+  readonly actorType: "human";
+  readonly decision: "execute-after-dry-run";
+  readonly approvedAt: string;
+}
+
 export interface CreateCodexAgentInvocationIntentInput {
   readonly mode?: CodexAgentInvocationMode;
   readonly capabilityEvidence: CodexAgentProviderCapabilityEvidence;
@@ -45,6 +59,8 @@ export interface CreateCodexAgentInvocationIntentInput {
   readonly allowedExecutionPosture?: "dry-run-only" | "execute-enabled";
   readonly scope?: CodexAgentScopeBinding;
   readonly idempotencyBinding?: CodexAgentIdempotencyBinding;
+  readonly dryRunProof?: CodexAgentDryRunProof;
+  readonly operatorApproval?: CodexAgentOperatorApprovalPoint;
 }
 
 export interface CodexAgentInvocationIntent {
@@ -58,6 +74,13 @@ export interface CodexAgentInvocationIntent {
     readonly operation: "submit";
   };
   readonly outcome: "planned" | "ready-to-invoke" | "blocked";
+  readonly executionPreconditions: {
+    readonly dryRunRequired: true;
+    readonly dryRunProof: "provided" | "missing";
+    readonly operatorApproval: "provided" | "missing";
+    readonly mergeSupported: false;
+    readonly mergeAuthority: "human-only";
+  };
   readonly diagnostics: readonly string[];
 }
 
@@ -114,6 +137,13 @@ export function createCodexAgentInvocationIntent(
       operation: "submit",
     },
     outcome: ok ? (mode === "execute" ? "ready-to-invoke" : "planned") : "blocked",
+    executionPreconditions: {
+      dryRunRequired: true,
+      dryRunProof: isSafeDryRunProof(input.dryRunProof) ? "provided" : "missing",
+      operatorApproval: isSafeOperatorApproval(input.operatorApproval) ? "provided" : "missing",
+      mergeSupported: false,
+      mergeAuthority: "human-only",
+    },
     diagnostics,
   };
 }
@@ -177,6 +207,14 @@ function validateExecuteBoundary(input: CreateCodexAgentInvocationIntentInput): 
     diagnostics.push("Codex execute intent requires idempotency binding.");
   }
 
+  if (!isSafeDryRunProof(input.dryRunProof)) {
+    diagnostics.push("Codex dogfood execute intent requires prior dry-run proof.");
+  }
+
+  if (!isSafeOperatorApproval(input.operatorApproval)) {
+    diagnostics.push("Codex dogfood execute intent requires explicit human operator approval after dry run.");
+  }
+
   const submitAvailability = requireCodexProviderOperation(input.capabilityEvidence, "submit");
 
   if (!submitAvailability.ok) {
@@ -209,6 +247,36 @@ function isSafeIdempotencyBinding(
     binding !== undefined &&
     idempotencyKeyPattern.test(binding.key) &&
     /^[A-Za-z0-9._:-]{12,160}$/.test(binding.scopeFingerprint)
+  );
+}
+
+function isSafeDryRunProof(proof: CodexAgentDryRunProof | undefined): proof is CodexAgentDryRunProof {
+  return (
+    proof !== undefined &&
+    proof.mode === "dry-run" &&
+    proof.outcome === "planned" &&
+    /^req_[A-Za-z0-9._:-]{12,160}$/.test(proof.requestId) &&
+    /^corr_[A-Za-z0-9._:-]{12,160}$/.test(proof.correlationId) &&
+    isMillisecondIsoTimestamp(proof.completedAt)
+  );
+}
+
+function isSafeOperatorApproval(
+  approval: CodexAgentOperatorApprovalPoint | undefined,
+): approval is CodexAgentOperatorApprovalPoint {
+  return (
+    approval !== undefined &&
+    approval.actorType === "human" &&
+    approval.decision === "execute-after-dry-run" &&
+    isMillisecondIsoTimestamp(approval.approvedAt)
+  );
+}
+
+function isMillisecondIsoTimestamp(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value) &&
+    !Number.isNaN(Date.parse(value))
   );
 }
 

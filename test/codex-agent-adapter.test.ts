@@ -46,7 +46,7 @@ test("fails closed before Codex execute intent when scope, posture, or idempoten
   assert.match(intent.diagnostics.join("\n"), /idempotency binding/i);
 });
 
-test("separates guarded Codex execute intent from dry-run preview", () => {
+test("blocks dogfood execute intent until a prior dry-run proof is present", () => {
   const intent = createCodexAgentInvocationIntent({
     mode: "execute",
     capabilityEvidence,
@@ -66,11 +66,57 @@ test("separates guarded Codex execute intent from dry-run preview", () => {
     },
   });
 
+  assert.equal(intent.ok, false);
+  assert.equal(intent.mode, "execute");
+  assert.equal(intent.invocation.startsProviderSession, false);
+  assert.equal(intent.outcome, "blocked");
+  assert.match(intent.diagnostics.join("\n"), /prior dry-run proof/i);
+});
+
+test("separates guarded Codex execute intent from dry-run preview after human approval", () => {
+  const intent = createCodexAgentInvocationIntent({
+    mode: "execute",
+    capabilityEvidence,
+    workspace: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    allowedExecutionPosture: "execute-enabled",
+    scope: {
+      owner: "TommyKammy",
+      repository: "Ensen-loop",
+      issueNumber: 59,
+    },
+    idempotencyBinding: {
+      key: "issue-59-codex-submit",
+      scopeFingerprint: "TommyKammy-Ensen-loop-59",
+    },
+    dryRunProof: {
+      mode: "dry-run",
+      outcome: "planned",
+      requestId: "req_issue59DryRunProof01",
+      correlationId: "corr_issue59DryRunProof01",
+      completedAt: "2026-05-02T00:05:00.000Z",
+    },
+    operatorApproval: {
+      actorType: "human",
+      decision: "execute-after-dry-run",
+      approvedAt: "2026-05-02T00:06:00.000Z",
+    },
+  });
+
   assert.equal(intent.ok, true);
   assert.equal(intent.mode, "execute");
   assert.equal(intent.invocation.intent, "execute-codex-invocation");
   assert.equal(intent.invocation.startsProviderSession, false);
   assert.equal(intent.outcome, "ready-to-invoke");
+  assert.deepEqual(intent.executionPreconditions, {
+    dryRunRequired: true,
+    dryRunProof: "provided",
+    operatorApproval: "provided",
+    mergeSupported: false,
+    mergeAuthority: "human-only",
+  });
   assert.deepEqual(intent.diagnostics, []);
 });
 

@@ -83,6 +83,18 @@ const agentOutcome = createCodexAgentInvocationIntent({
     key: "issue-60-codex-submit",
     scopeFingerprint: "TommyKammy-Ensen-loop-60",
   },
+  dryRunProof: {
+    mode: "dry-run",
+    outcome: "planned",
+    requestId: "req_issue60DryRunProof01",
+    correlationId: "corr_issue60DryRunProof01",
+    completedAt: "2026-05-02T00:04:00.000Z",
+  },
+  operatorApproval: {
+    actorType: "human",
+    decision: "execute-after-dry-run",
+    approvedAt: "2026-05-02T00:05:00.000Z",
+  },
 });
 
 type CreateArtifactInput = Parameters<typeof createLaneArtifactOutput>[0];
@@ -162,6 +174,13 @@ test("emits patch artifact metadata tied to completed lane state without raw evi
   assert.equal(artifact.humanReview.mergeAuthority, "human-only");
   assert.equal(artifact.createsPullRequest, false);
   assert.equal(artifact.mergeReady, false);
+  assert.deepEqual(artifact.agentProvider.executionPreconditions, {
+    dryRunRequired: true,
+    dryRunProof: "provided",
+    operatorApproval: "provided",
+    mergeSupported: false,
+    mergeAuthority: "human-only",
+  });
   assert.deepEqual(artifact.evidence.references, [
     {
       evidenceBundleId: safeEvidenceRef.id,
@@ -246,6 +265,8 @@ test("emits guarded PR draft intent without implying automatic merge authority",
   assert.equal(artifact.changeRequestIntent.humanReviewBoundary, true);
   assert.equal(artifact.mergeReady, false);
   assert.equal(artifact.autoMerge, false);
+  assert.equal(artifact.agentProvider.executionPreconditions.mergeSupported, false);
+  assert.equal(artifact.agentProvider.executionPreconditions.mergeAuthority, "human-only");
 });
 
 test("emits explicit unsupported fetchEvidence only when no evidence references are present", () => {
