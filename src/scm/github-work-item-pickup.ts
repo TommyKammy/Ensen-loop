@@ -89,8 +89,21 @@ const githubPickupBoundary: GithubPickupBoundary = Object.freeze({
 });
 
 export function pickupGithubIssueWorkItem(
-  input: GithubIssuePickupInput,
+  input: GithubIssuePickupInput | null | undefined,
 ): GithubWorkItemPickupResult {
+  if (input === null || input === undefined) {
+    return {
+      ok: false,
+      issues: [
+        {
+          path: "input",
+          message: "GitHub pickup input is required.",
+        },
+      ],
+      boundary: githubPickupBoundary,
+    };
+  }
+
   const issues = collectGithubIssuePickupIssues(input);
 
   if (issues.length > 0) {
@@ -120,7 +133,7 @@ export function pickupGithubIssueWorkItem(
   return {
     ok: true,
     workItem: {
-      id: `github-${repository.owner}-${repository.name}-${issue.number}`,
+      id: `github:${repository.owner}/${repository.name}#${issue.number}`,
       title: issue.title,
       source: "github-issue",
       status: issue.state === "open" ? "ready" : "blocked",
@@ -281,6 +294,14 @@ function validateAllowlist(
   let hasOwnerControlledMatch = false;
 
   allowlist.forEach((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      issues.push({
+        path: `allowlist[${index}]`,
+        message: "Owner-controlled repository allowlist entries must be objects.",
+      });
+      return;
+    }
+
     if (entry.ownerControlled !== true) {
       issues.push({
         path: `allowlist[${index}].ownerControlled`,

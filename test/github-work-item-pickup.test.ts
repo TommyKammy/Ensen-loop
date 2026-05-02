@@ -39,7 +39,7 @@ test("maps an allowed GitHub issue into provider-neutral WorkItem pickup facts",
 
   assert.equal(result.ok, true);
   assert.deepEqual(result.workItem, {
-    id: "github-TommyKammy-Ensen-loop-56",
+    id: "github:TommyKammy/Ensen-loop#56",
     title: "LOOP-031: Add GitHub WorkItem pickup for owner-controlled repos",
     source: "github-issue",
     status: "ready",
@@ -173,6 +173,18 @@ test("fails closed when owner-controlled scope is missing from the allowlist ent
   ]);
 });
 
+test("fails closed when top-level pickup input is missing", () => {
+  const result = pickupGithubIssueWorkItem(undefined);
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.issues, [
+    {
+      path: "input",
+      message: "GitHub pickup input is required.",
+    },
+  ]);
+});
+
 test("fails closed when allowlist scope is missing or malformed", () => {
   const missingResult = pickupGithubIssueWorkItem({
     allowlist: undefined,
@@ -180,6 +192,10 @@ test("fails closed when allowlist scope is missing or malformed", () => {
   } as unknown as Parameters<typeof pickupGithubIssueWorkItem>[0]);
   const malformedResult = pickupGithubIssueWorkItem({
     allowlist: {},
+    issue: allowedIssue,
+  } as unknown as Parameters<typeof pickupGithubIssueWorkItem>[0]);
+  const malformedEntryResult = pickupGithubIssueWorkItem({
+    allowlist: [null],
     issue: allowedIssue,
   } as unknown as Parameters<typeof pickupGithubIssueWorkItem>[0]);
 
@@ -192,6 +208,17 @@ test("fails closed when allowlist scope is missing or malformed", () => {
   ]);
   assert.equal(malformedResult.ok, false);
   assert.deepEqual(malformedResult.issues, missingResult.issues);
+  assert.equal(malformedEntryResult.ok, false);
+  assert.deepEqual(malformedEntryResult.issues, [
+    {
+      path: "allowlist[0]",
+      message: "Owner-controlled repository allowlist entries must be objects.",
+    },
+    {
+      path: "repository",
+      message: "GitHub repository must be explicitly allowlisted as owner-controlled.",
+    },
+  ]);
 });
 
 test("documents GitHub pickup as read-only input collection without executor protocol claims", async () => {
