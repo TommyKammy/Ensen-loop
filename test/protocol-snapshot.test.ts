@@ -6,7 +6,7 @@ import test from "node:test";
 const snapshotRoot = path.join(
   "protocol-snapshots",
   "ensen-protocol",
-  "v0.1.0",
+  "v0.2.0",
 );
 
 const expectedSchemas = [
@@ -19,6 +19,7 @@ const expectedSchemas = [
 const supportSchemas = ["schemas/eip.common.v1.schema.json"];
 
 const expectedFixtureFamilies = [
+  "capability-variants",
   "evidence-bundle-ref",
   "run-request",
   "run-result",
@@ -44,14 +45,14 @@ async function listJsonFixtures(relativePath: string): Promise<string[]> {
     .sort();
 }
 
-test("vendors the Ensen-protocol v0.1.0 protocol snapshot with provenance", async () => {
+test("vendors the Ensen-protocol v0.2.0 protocol snapshot with provenance", async () => {
   const manifest = await readJson("manifest.json");
 
   assert.deepEqual(manifest, {
     source: {
       repository: "TommyKammy/Ensen-protocol",
-      releaseTag: "v0.1.0",
-      protocolVersion: "0.1.0",
+      releaseTag: "v0.2.0",
+      protocolVersion: "0.2.0",
     },
     policy: {
       updatePolicy:
@@ -71,6 +72,11 @@ test("vendors the Ensen-protocol v0.1.0 protocol snapshot with provenance", asyn
           path: "schemas/eip.run-result.v1.schema.json",
           reason:
             "Require VerificationSummary.status for unambiguous verification payloads.",
+        },
+        {
+          path: "fixtures/capability-variants/v1/valid/*.json",
+          reason:
+            "Identify the copied consumer snapshot provenance as Ensen-protocol v0.2.0.",
         },
       ],
     },
@@ -136,7 +142,9 @@ test("keeps local protocol snapshot corrections explicit", async () => {
 });
 
 test("includes valid and invalid fixtures for each required EIP surface", async () => {
-  for (const fixtureFamily of expectedFixtureFamilies) {
+  for (const fixtureFamily of expectedFixtureFamilies.filter(
+    (family) => family !== "capability-variants",
+  )) {
     const validFixtures = await listJsonFixtures(
       path.join("fixtures", fixtureFamily, "v1", "valid"),
     );
@@ -153,4 +161,44 @@ test("includes valid and invalid fixtures for each required EIP surface", async 
       `${fixtureFamily} must include at least one invalid fixture`,
     );
   }
+});
+
+test("includes protocol v0.2.0 capability variant fixtures without changing EIP schema major", async () => {
+  const validFixtures = await listJsonFixtures(
+    path.join("fixtures", "capability-variants", "v1", "valid"),
+  );
+
+  assert.deepEqual(validFixtures, [
+    "evidence-unavailable.json",
+    "fully-supported-transport.json",
+    "retryability-examples.json",
+    "submit-only-no-polling.json",
+    "unsupported-cancel.json",
+  ]);
+
+  for (const fixtureName of validFixtures) {
+    const fixture = await readJson(
+      path.join("fixtures", "capability-variants", "v1", "valid", fixtureName),
+    );
+    assertJsonObject(fixture, `${fixtureName} must be a JSON object`);
+    assert.equal(fixture.schemaVersion, "eip.capability-variant.example.v1");
+
+    const protocolSnapshot = fixture.protocolSnapshot;
+    assertJsonObject(protocolSnapshot, `${fixtureName} protocolSnapshot must be a JSON object`);
+    assert.equal(protocolSnapshot.tag, "v0.2.0");
+  }
+
+  const runRequestSchema = await readJson("schemas/eip.run-request.v1.schema.json");
+  const runResultSchema = await readJson("schemas/eip.run-result.v1.schema.json");
+
+  assertJsonObject(runRequestSchema, "RunRequest schema must be a JSON object");
+  assertJsonObject(runResultSchema, "RunResult schema must be a JSON object");
+  assert.equal(
+    runRequestSchema.$id,
+    "https://eip.ensen.dev/schemas/eip.run-request.v1.schema.json",
+  );
+  assert.equal(
+    runResultSchema.$id,
+    "https://eip.ensen.dev/schemas/eip.run-result.v1.schema.json",
+  );
 });

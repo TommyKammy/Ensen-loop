@@ -22,7 +22,7 @@ GitHub issue pickup is documented in [docs/reference/github-work-item-pickup.md]
 
 Phase 4 patch and PR draft artifact output is documented in [docs/reference/lane-artifact-output.md](docs/reference/lane-artifact-output.md). It emits reviewable metadata for completed lane runs without embedding evidence payloads, opening pull requests, claiming merge readiness, or bypassing human review.
 
-The copied Ensen-protocol v0.1.0 schema and conformance fixture snapshot is documented in [protocol-snapshots/ensen-protocol/v0.1.0/README.md](protocol-snapshots/ensen-protocol/v0.1.0/README.md). It is repo-owned fixture data, not a mutable shared runtime dependency.
+The copied Ensen-protocol v0.2.0 schema and conformance fixture snapshot is documented in [protocol-snapshots/ensen-protocol/v0.2.0/README.md](protocol-snapshots/ensen-protocol/v0.2.0/README.md). It is repo-owned fixture data, not a mutable shared runtime dependency. Protocol release `v0.2.0` still carries `eip.*.v1` artifact schemas; do not rename those artifacts to `v2` unless a future protocol release defines new schema majors.
 
 ## Commands
 
@@ -39,7 +39,7 @@ node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
 node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>
 ```
 
-`npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.1.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures.
+`npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.2.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures. Those fixtures remain `eip.run-request.v1`, `eip.run-status.v1`, `eip.run-result.v1`, and `eip.evidence-bundle-ref.v1`.
 
 `dry-run --sample` emits a deterministic local execution plan as JSON. It describes the work item, lane workspace, agent provider, SCM provider, verification, and evidence intents without creating worktrees, branches, commits, change requests, durable evidence, or invoking external providers. Its evidence section may include EvidenceBundleRef v1-compatible references as validation-ready metadata. These references identify where evidence could be found; they are not full evidence bundle artifacts and do not claim durable compliance packaging.
 
@@ -51,7 +51,7 @@ node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-roo
 
 `x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>` runs the bounded Phase 3 local fake lane smoke path. It validates the RunRequest, prepares local lane workspace/state directories, invokes the deterministic local fake executor, persists LaneRunState plus local evidence metadata, and emits one aggregate JSON object with RunStatusSnapshot and RunResult projections. It does not create or mutate GitHub issues, branches, pull requests, reviews, commits, real agent-provider sessions, or production evidence archives. Invalid input, unsupported EIP major versions, unsafe roots, failed fake outcomes, and blocked fake outcomes fail closed with parseable JSON output.
 
-EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.1.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
+EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.2.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
 
 ## Scope
 

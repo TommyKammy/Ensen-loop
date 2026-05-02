@@ -19,10 +19,10 @@ import {
 const snapshotRoot = path.join(
   "protocol-snapshots",
   "ensen-protocol",
-  "v0.1.0",
+  "v0.2.0",
 );
 const fixtureRoot = path.join(snapshotRoot, "fixtures");
-const protocolLabel = "Ensen-protocol v0.1.0 / EIP 0.1.0";
+const protocolLabel = "Ensen-protocol v0.2.0 / EIP artifact schemas v1";
 
 const fixtureSurfaces = [
   {
