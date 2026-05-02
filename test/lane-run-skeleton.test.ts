@@ -107,6 +107,7 @@ test("prepares a local skeleton tied to lane id, branch intent, scope, and resta
     const journalText = state.journal.entries.map((entry) => entry.message).join("\n");
     assert.match(journalText, /branch intent: codex\/issue-58-restart from main/);
     assert.match(journalText, /authoritative scope: TommyKammy\/Ensen-loop repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP/);
+    assert.match(journalText, /dogfood allowlist matched: TommyKammy\/Ensen-loop ownerIdentity=owner-maintainer/);
     assert.match(journalText, /idempotency key: issue-58-lane-skeleton-restart/);
     assert.match(journalText, /cleanup: remove prepared local lane workspace and state directory for run_01HV7Y8M8F2KQ5W3P9R6T4N2RESTART/);
     assert.equal(JSON.stringify(state).includes(roots.repositoryRoot), false);
