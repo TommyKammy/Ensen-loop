@@ -1,0 +1,283 @@
+import assert from "node:assert/strict";
+import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import test from "node:test";
+
+import {
+  planBranchLaneRunSkeleton,
+  readLaneRunState,
+} from "../src/lane/index.js";
+import type { WorkItem } from "../src/work-item/index.js";
+
+const readyWorkItem: WorkItem = {
+  id: "workitem_01HV7Y8M8F2KQ5W3P9R6T4N258",
+  title: "Add worktree and branch lane run skeleton",
+  source: "github-issue",
+  status: "ready",
+};
+
+test("dry-runs a deterministic branch/worktree lane skeleton without filesystem mutation", async () => {
+  const roots = await createSkeletonRoots();
+
+  try {
+    const skeleton = await planBranchLaneRunSkeleton({
+      workItem: readyWorkItem,
+      laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N258",
+      idempotencyKey: "issue-58-lane-skeleton-001",
+      repositoryRoot: roots.repositoryRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-58",
+      authoritativeScope: {
+        ownerControlled: true,
+        repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+        repositorySlug: "TommyKammy/Ensen-loop",
+        repositoryRoot: roots.repositoryRoot,
+      },
+    });
+
+    assert.equal(skeleton.mode, "dry-run");
+    assert.equal(skeleton.mutatesFilesystem, false);
+    assert.equal(skeleton.startsAgentExecution, false);
+    assert.equal(skeleton.createsBranch, false);
+    assert.equal(skeleton.opensChangeRequest, false);
+    assert.equal(skeleton.laneRunId, "run_01HV7Y8M8F2KQ5W3P9R6T4N258");
+    assert.equal(skeleton.workItem.id, readyWorkItem.id);
+    assert.equal(skeleton.branch.name, "codex/issue-58");
+    assert.equal(skeleton.worktree.path, path.join(roots.worktreeRoot, "lane-runs", skeleton.laneRunId));
+    assert.equal(skeleton.state.stateFile, path.join(roots.stateRoot, "lane-runs", `${skeleton.laneRunId}.json`));
+    assert.equal(skeleton.idempotency.key, "issue-58-lane-skeleton-001");
+    assert.deepEqual(skeleton.providerState, {
+      agentProviderSessionCreated: false,
+      scmBranchCreated: false,
+      scmWorktreeCreated: false,
+      changeRequestCreated: false,
+    });
+
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+test("prepares a local skeleton tied to lane id, branch intent, scope, and restart facts", async () => {
+  const roots = await createSkeletonRoots();
+
+  try {
+    const skeleton = await planBranchLaneRunSkeleton({
+      mode: "prepare",
+      workItem: readyWorkItem,
+      laneRunId: "run_01HV7Y8M8F2KQ5W3P9R6T4N2RESTART",
+      idempotencyKey: "issue-58-lane-skeleton-restart",
+      repositoryRoot: roots.repositoryRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-58-restart",
+      baseBranch: "main",
+      authoritativeScope: {
+        ownerControlled: true,
+        repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+        repositorySlug: "TommyKammy/Ensen-loop",
+        repositoryRoot: roots.repositoryRoot,
+      },
+    });
+
+    assert.equal(skeleton.mode, "prepare");
+    assert.equal(skeleton.mutatesFilesystem, true);
+    assert.equal(skeleton.localSkeleton?.created.workspace, true);
+    assert.equal(skeleton.localSkeleton?.created.state, true);
+    assert.equal(skeleton.startsAgentExecution, false);
+    assert.equal(skeleton.createsBranch, false);
+    assert.equal(skeleton.opensChangeRequest, false);
+
+    const state = await readLaneRunState(roots.stateRoot, skeleton.laneRunId);
+    assert.equal(state.id, skeleton.laneRunId);
+    assert.equal(state.workItemId, readyWorkItem.id);
+    assert.equal(state.status, "queued");
+    assert.equal(state.startsAgentExecution, false);
+
+    const journalText = state.journal.entries.map((entry) => entry.message).join("\n");
+    assert.match(journalText, /branch intent: codex\/issue-58-restart from main/);
+    assert.match(journalText, /authoritative scope: TommyKammy\/Ensen-loop repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP/);
+    assert.match(journalText, /idempotency key: issue-58-lane-skeleton-restart/);
+    assert.match(journalText, /cleanup: remove prepared local lane workspace and state directory for run_01HV7Y8M8F2KQ5W3P9R6T4N2RESTART/);
+    assert.equal(JSON.stringify(state).includes(roots.repositoryRoot), false);
+    assert.equal(JSON.stringify(state).includes(roots.worktreeRoot), false);
+
+    assert.equal(
+      await readFile(path.join(skeleton.localSkeleton!.workspacePath, ".ensen-loop-prepared.json"), "utf8")
+        .then((value) => JSON.parse(value).laneRunId),
+      skeleton.laneRunId,
+    );
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+test("fails closed before mutation for unsafe branch, missing scope, symlink root, and disallowed repository", async () => {
+  const roots = await createSkeletonRoots();
+  const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-outside-repo-"));
+  const symlinkRoot = path.join(outsideRoot, "repo-symlink");
+
+  try {
+    await symlink(roots.repositoryRoot, symlinkRoot, "dir");
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_unsafe_branch",
+          idempotencyKey: "issue-58-lane-skeleton-unsafe",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "../escape",
+          authoritativeScope: {
+            ownerControlled: true,
+            repositoryId: "repo_allowed",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryRoot: roots.repositoryRoot,
+          },
+        }),
+      /Branch name is unsafe/,
+    );
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_missing_scope",
+          idempotencyKey: "issue-58-lane-skeleton-missing-scope",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-58",
+        }),
+      /authoritative repository scope is required/,
+    );
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_symlink_root",
+          idempotencyKey: "issue-58-lane-skeleton-symlink-root",
+          repositoryRoot: symlinkRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-58",
+          authoritativeScope: {
+            ownerControlled: true,
+            repositoryId: "repo_allowed",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryRoot: symlinkRoot,
+          },
+        }),
+      /Repository root must be a real directory/,
+    );
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_disallowed_repo",
+          idempotencyKey: "issue-58-lane-skeleton-disallowed",
+          repositoryRoot: outsideRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-58",
+          allowedRepositoryRoots: [roots.repositoryRoot],
+          authoritativeScope: {
+            ownerControlled: true,
+            repositoryId: "repo_disallowed",
+            repositorySlug: "TommyKammy/Other",
+            repositoryRoot: outsideRoot,
+          },
+        }),
+      /Repository root is not allowlisted/,
+    );
+
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs")), /ENOENT/);
+  } finally {
+    await roots.cleanup();
+    await rm(outsideRoot, { recursive: true, force: true });
+    await rm(symlinkRoot, { force: true });
+  }
+});
+
+test("preserves pre-existing local skeleton directories when state persistence fails", async () => {
+  const roots = await createSkeletonRoots();
+  const laneRunId = "run_existing_local_skeleton";
+  const existingWorkspacePath = path.join(roots.worktreeRoot, "lane-runs", laneRunId);
+  const existingStatePath = path.join(roots.stateRoot, "lane-runs", laneRunId);
+  const blockedStateFilePath = path.join(roots.stateRoot, "lane-runs", `${laneRunId}.json`);
+
+  try {
+    await mkdir(existingWorkspacePath, { recursive: true });
+    await mkdir(existingStatePath, { recursive: true });
+    await mkdir(blockedStateFilePath, { recursive: true });
+    await writeFile(path.join(existingWorkspacePath, "pre-existing.txt"), "keep workspace\n", "utf8");
+    await writeFile(path.join(existingStatePath, "pre-existing.txt"), "keep state\n", "utf8");
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId,
+          idempotencyKey: "issue-58-lane-skeleton-existing-fail",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-58-existing-fail",
+          authoritativeScope: {
+            ownerControlled: true,
+            repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryRoot: roots.repositoryRoot,
+          },
+        }),
+      /Lane run state file path must be a regular file/,
+    );
+
+    assert.equal((await lstat(existingWorkspacePath)).isDirectory(), true);
+    assert.equal((await lstat(existingStatePath)).isDirectory(), true);
+    assert.equal(await readFile(path.join(existingWorkspacePath, "pre-existing.txt"), "utf8"), "keep workspace\n");
+    assert.equal(await readFile(path.join(existingStatePath, "pre-existing.txt"), "utf8"), "keep state\n");
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+async function createSkeletonRoots(): Promise<{
+  readonly repositoryRoot: string;
+  readonly worktreeRoot: string;
+  readonly stateRoot: string;
+  readonly cleanup: () => Promise<void>;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-skeleton-"));
+  const repositoryRoot = path.join(root, "repo");
+  const worktreeRoot = path.join(root, "worktrees");
+  const stateRoot = path.join(root, "state");
+
+  await mkdir(repositoryRoot);
+  await mkdir(worktreeRoot);
+  await mkdir(stateRoot);
+
+  return {
+    repositoryRoot,
+    worktreeRoot,
+    stateRoot,
+    cleanup: async () => {
+      await rm(root, { recursive: true, force: true });
+    },
+  };
+}

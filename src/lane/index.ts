@@ -88,11 +88,79 @@ export interface PreparedLocalLaneWorkspace {
   };
 }
 
+export type BranchLaneRunSkeletonMode = "dry-run" | "prepare";
+
+export interface AuthoritativeLaneRunScope {
+  readonly ownerControlled: true;
+  readonly repositoryId: string;
+  readonly repositorySlug: string;
+  readonly repositoryRoot: string;
+}
+
+export interface PlanBranchLaneRunSkeletonInput {
+  readonly mode?: BranchLaneRunSkeletonMode;
+  readonly workItem: WorkItem;
+  readonly laneRunId: string;
+  readonly idempotencyKey: string;
+  readonly repositoryRoot: string;
+  readonly worktreeRoot: string;
+  readonly stateRoot: string;
+  readonly branchName: string;
+  readonly baseBranch?: string;
+  readonly authoritativeScope?: AuthoritativeLaneRunScope;
+  readonly allowedRepositoryRoots?: readonly string[];
+  readonly recordedAt?: string;
+}
+
+export interface BranchLaneRunSkeleton {
+  readonly mode: BranchLaneRunSkeletonMode;
+  readonly mutatesFilesystem: boolean;
+  readonly startsAgentExecution: false;
+  readonly createsBranch: false;
+  readonly opensChangeRequest: false;
+  readonly laneRunId: string;
+  readonly workItem: WorkItem;
+  readonly repository: {
+    readonly id: string;
+    readonly slug: string;
+  };
+  readonly branch: {
+    readonly name: string;
+    readonly base: string;
+  };
+  readonly worktree: {
+    readonly path: string;
+  };
+  readonly state: {
+    readonly root: string;
+    readonly stateDirectory: string;
+    readonly stateFile: string;
+  };
+  readonly idempotency: {
+    readonly key: string;
+    readonly intent: string;
+  };
+  readonly providerState: {
+    readonly agentProviderSessionCreated: false;
+    readonly scmBranchCreated: false;
+    readonly scmWorktreeCreated: false;
+    readonly changeRequestCreated: false;
+  };
+  readonly cleanup: {
+    readonly intent: string;
+  };
+  readonly localSkeleton?: PreparedLocalLaneWorkspace;
+  readonly laneRunStatePath?: string;
+}
+
 export const preparedLocalLaneMarkerFilename = ".ensen-loop-prepared.json";
 export const preparedLocalLaneMarkerSchemaVersion = "ensen.local-lane-prepared.v1";
 
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
+const branchNamePattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
+const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const isoDateTimePattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const laneRunStatuses = new Set<unknown>([
@@ -184,6 +252,162 @@ export async function prepareLocalLaneWorkspace(
 
     throw error;
   }
+}
+
+export async function planBranchLaneRunSkeleton(
+  input: PlanBranchLaneRunSkeletonInput,
+): Promise<BranchLaneRunSkeleton> {
+  const mode = input.mode ?? "dry-run";
+
+  if (mode !== "dry-run" && mode !== "prepare") {
+    throw new Error("Lane skeleton mode must be dry-run or prepare.");
+  }
+
+  assertReadyWorkItem(input.workItem);
+  assertSafeBranchName(input.branchName);
+  assertSafeBranchName(input.baseBranch ?? "main");
+  assertSafeIdempotencyKey(input.idempotencyKey);
+
+  const laneRunId = resolveLocalLaneDirectoryName({
+    laneRunId: input.laneRunId,
+    workItemId: input.workItem.id,
+  });
+  const scope = input.authoritativeScope;
+
+  if (scope === undefined) {
+    throw new Error("An authoritative repository scope is required before lane skeleton planning.");
+  }
+
+  validateAuthoritativeLaneRunScope(scope);
+
+  const repositoryRoot = await resolveCanonicalRepositoryRoot(input.repositoryRoot);
+  const scopedRepositoryRoot = await resolveCanonicalRepositoryRoot(scope.repositoryRoot);
+
+  if (repositoryRoot.realPath !== scopedRepositoryRoot.realPath) {
+    throw new Error("Repository root must match the authoritative repository scope.");
+  }
+
+  if (input.allowedRepositoryRoots !== undefined) {
+    await assertRepositoryRootAllowlisted(repositoryRoot.realPath, input.allowedRepositoryRoots);
+  }
+
+  const worktreeRoot = await resolveCanonicalLocalLaneRoot("workspace", input.worktreeRoot);
+  const stateRoot = await resolveCanonicalLocalLaneRoot("state", input.stateRoot);
+
+  if (worktreeRoot.realPath === stateRoot.realPath) {
+    throw new Error("Local lane worktree root and state root must be separate directories.");
+  }
+
+  const stateFile = resolveLaneRunStatePath(stateRoot.inputPath, laneRunId);
+  const stateDirectory = path.join(stateRoot.inputPath, "lane-runs", laneRunId);
+  const skeletonBase = {
+    mode,
+    mutatesFilesystem: mode === "prepare",
+    startsAgentExecution: false,
+    createsBranch: false,
+    opensChangeRequest: false,
+    laneRunId,
+    workItem: { ...input.workItem },
+    repository: {
+      id: scope.repositoryId,
+      slug: scope.repositorySlug,
+    },
+    branch: {
+      name: input.branchName,
+      base: input.baseBranch ?? "main",
+    },
+    worktree: {
+      path: path.join(worktreeRoot.inputPath, "lane-runs", laneRunId),
+    },
+    state: {
+      root: stateRoot.inputPath,
+      stateDirectory,
+      stateFile,
+    },
+    idempotency: {
+      key: input.idempotencyKey,
+      intent: "deduplicate later provider submit binding without starting execution",
+    },
+    providerState: {
+      agentProviderSessionCreated: false,
+      scmBranchCreated: false,
+      scmWorktreeCreated: false,
+      changeRequestCreated: false,
+    },
+    cleanup: {
+      intent: `cleanup: remove prepared local lane workspace and state directory for ${laneRunId}`,
+    },
+  } satisfies Omit<BranchLaneRunSkeleton, "localSkeleton" | "laneRunStatePath">;
+
+  if (mode === "dry-run") {
+    return skeletonBase;
+  }
+
+  const localSkeleton = await prepareLocalLaneWorkspace({
+    workspaceRoot: worktreeRoot.inputPath,
+    stateRoot: stateRoot.inputPath,
+    laneRunId,
+    workItemId: input.workItem.id,
+  });
+  const recordedAt = input.recordedAt ?? new Date().toISOString();
+  const state = createLaneRunState({
+    id: laneRunId,
+    workItemId: input.workItem.id,
+    status: "queued",
+    revision: 1,
+    createdAt: recordedAt,
+    updatedAt: recordedAt,
+    journal: createLaneJournal({
+      id: `journal-${laneRunId}`,
+      laneRunId,
+      workItemId: input.workItem.id,
+      entries: [
+        {
+          id: `${laneRunId}-scope`,
+          recordedAt,
+          kind: "hypothesis",
+          message: `authoritative scope: ${scope.repositorySlug} ${scope.repositoryId}`,
+        },
+        {
+          id: `${laneRunId}-branch`,
+          recordedAt,
+          kind: "change",
+          message: `branch intent: ${input.branchName} from ${input.baseBranch ?? "main"}`,
+        },
+        {
+          id: `${laneRunId}-idempotency`,
+          recordedAt,
+          kind: "change",
+          message: `idempotency key: ${input.idempotencyKey}`,
+        },
+        {
+          id: `${laneRunId}-cleanup`,
+          recordedAt,
+          kind: "next-action",
+          message: skeletonBase.cleanup.intent,
+        },
+      ],
+    }),
+  });
+  let laneRunStatePath: string | undefined;
+
+  try {
+    laneRunStatePath = await writeLaneRunState(stateRoot.inputPath, state);
+  } catch (error) {
+    if (localSkeleton.created.workspace) {
+      await rm(localSkeleton.workspacePath, { recursive: true, force: true });
+    }
+    if (localSkeleton.created.state) {
+      await rm(localSkeleton.statePath, { recursive: true, force: true });
+    }
+    throw error;
+  }
+
+  return {
+    ...skeletonBase,
+    localSkeleton,
+    laneRunStatePath,
+  };
 }
 
 export function serializeLaneRunState(state: LaneRunState): string {
@@ -315,6 +539,89 @@ interface PreparedLocalLanePath {
 interface CanonicalLocalLaneRoot {
   readonly inputPath: string;
   readonly realPath: string;
+}
+
+function assertReadyWorkItem(workItem: WorkItem): void {
+  if (!isNonEmptyString(workItem.id) || !isNonEmptyString(workItem.title) || !isNonEmptyString(workItem.source)) {
+    throw new Error("WorkItem scope is malformed.");
+  }
+
+  if (workItem.status !== "ready") {
+    throw new Error("WorkItem must be ready before lane skeleton planning.");
+  }
+}
+
+function assertSafeIdempotencyKey(idempotencyKey: string): void {
+  if (!idempotencyIntentPattern.test(idempotencyKey)) {
+    throw new Error("Idempotency key is unsafe for lane skeleton planning.");
+  }
+}
+
+function assertSafeBranchName(branchName: string): void {
+  if (
+    !branchNamePattern.test(branchName) ||
+    branchName.includes("..") ||
+    branchName.includes("//") ||
+    branchName.includes("@{") ||
+    branchName.includes("\\") ||
+    branchName.endsWith("/") ||
+    branchName.endsWith(".") ||
+    branchName.endsWith(".lock") ||
+    branchName.startsWith(".") ||
+    branchName.includes(" ")
+  ) {
+    throw new Error("Branch name is unsafe for lane skeleton planning.");
+  }
+}
+
+function validateAuthoritativeLaneRunScope(scope: AuthoritativeLaneRunScope): void {
+  if (
+    scope.ownerControlled !== true ||
+    !isNonEmptyString(scope.repositoryId) ||
+    !repositorySlugPattern.test(scope.repositorySlug) ||
+    !isNonEmptyString(scope.repositoryRoot)
+  ) {
+    throw new Error("Authoritative repository scope is malformed.");
+  }
+}
+
+async function assertRepositoryRootAllowlisted(
+  repositoryRealPath: string,
+  allowedRepositoryRoots: readonly string[],
+): Promise<void> {
+  for (const allowedRoot of allowedRepositoryRoots) {
+    const allowed = await resolveCanonicalRepositoryRoot(allowedRoot);
+
+    if (allowed.realPath === repositoryRealPath) {
+      return;
+    }
+  }
+
+  throw new Error("Repository root is not allowlisted for lane skeleton planning.");
+}
+
+async function resolveCanonicalRepositoryRoot(rootPath: string): Promise<CanonicalLocalLaneRoot> {
+  if (!path.isAbsolute(rootPath)) {
+    throw new Error("Repository root must be an absolute path.");
+  }
+
+  const resolvedRoot = path.resolve(rootPath);
+  const stats = await lstat(resolvedRoot).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      throw new Error("Repository root must exist before lane skeleton planning.");
+    }
+
+    throw error;
+  });
+
+  if (stats.isSymbolicLink() || !stats.isDirectory()) {
+    throw new Error("Repository root must be a real directory.");
+  }
+
+  return {
+    inputPath: resolvedRoot,
+    realPath: await realpath(resolvedRoot),
+  };
 }
 
 async function resolveCanonicalLocalLaneRoot(
