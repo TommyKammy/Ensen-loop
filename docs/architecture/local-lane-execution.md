@@ -96,6 +96,22 @@ worktree path, state file path, idempotency fact, and provider non-actions
 without creating branch, worktree, change request, agent session, or local
 provider state.
 
+Dogfood preparation requires a separate owner-controlled repository execution
+allowlist. That allowlist is operator-owned configuration, not GitHub issue text
+and not Ensen-flow approval state. Each matching entry binds
+`ownerIdentity`, `repositorySlug`, `repositoryUrl`, and `<repository-root>` with
+`ownerControlled: true`. A missing or mismatched dogfood allowlist blocks before
+prepare mode creates lane workspaces, state directories, provider sessions,
+branches, pull requests, or agent execution. Diagnostics name the failing
+category, such as `ownerIdentity`, `repositorySlug`, `repositoryUrl`, or
+`repositoryRoot`, without echoing raw local absolute paths.
+
+GitHub WorkItem pickup has its own read-only allowlist for collecting issue
+facts. Those pickup facts can feed the later authoritative scope record, but the
+pickup allowlist is not execution authority by itself. Execution-capable dogfood
+lanes must still match the dogfood repository allowlist at the local lane
+boundary.
+
 Prepare mode is explicit. It creates only the Ensen-loop local lane workspace
 and state directories, writes a queued LaneRunState, and records branch intent,
 repository scope, idempotency, and cleanup facts in the Lane Journal. It still
@@ -166,6 +182,8 @@ signals is missing or unsafe:
 - unsafe workspace root or state root resolution;
 - missing target binding when repository or workspace execution would depend on
   it;
+- missing or mismatched owner-controlled dogfood repository allowlist for
+  non-dry-run dogfood lane preparation;
 - missing policy context when policy posture is required for execution;
 - missing or malformed verification command evidence;
 - ambiguous executor outcome;

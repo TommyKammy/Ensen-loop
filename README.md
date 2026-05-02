@@ -18,7 +18,7 @@ The Ensen-loop mission and development charter alignment are summarized in [docs
 
 The Phase 1 local Work Item validation skeleton is documented in [docs/reference/work-item-contract.md](docs/reference/work-item-contract.md).
 
-GitHub issue pickup is documented in [docs/reference/github-work-item-pickup.md](docs/reference/github-work-item-pickup.md). It is an owner-controlled, allowlisted, read-only SCMProvider `work-item-pickup` boundary that maps already-loaded GitHub issue facts into provider-neutral Work Item facts without mutating GitHub state or starting execution.
+GitHub issue pickup is documented in [docs/reference/github-work-item-pickup.md](docs/reference/github-work-item-pickup.md). It is an owner-controlled, allowlisted, read-only SCMProvider `work-item-pickup` boundary that maps already-loaded GitHub issue facts into provider-neutral Work Item facts without mutating GitHub state or starting execution. Dogfood execution-capable lane preparation uses a separate owner-controlled repository allowlist at the local lane boundary; GitHub pickup allowlist facts are not execution authority by themselves.
 
 Phase 4 patch and PR draft artifact output is documented in [docs/reference/lane-artifact-output.md](docs/reference/lane-artifact-output.md). It emits reviewable metadata for completed lane runs without embedding evidence payloads, opening pull requests, claiming merge readiness, or bypassing human review.
 

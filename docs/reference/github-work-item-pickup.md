@@ -45,7 +45,15 @@ Successful pickup returns a Work Item with `source: "github-issue"` plus
 sanitized scope facts: provider, repository, issue number, issue URL,
 repository URL, requester login, and `ownerControlled: true`. These facts are
 authoritative input for later lane submission and idempotency binding, but they
-do not mean execution has started.
+do not mean execution has started and they do not authorize dogfood execution by
+themselves.
+
+Dogfood lane preparation has a separate owner-controlled execution allowlist at
+the local lane boundary. That allowlist must bind the owner identity, repository
+slug, repository URL, and local `<repository-root>` before non-dry-run
+preparation can create local lane workspace or state directories. GitHub pickup
+allowlist facts can help construct the authoritative scope record, but they are
+read-only provenance rather than execution authority.
 
 Malformed issue references, missing requester provenance, missing repository
 URL facts, secret-like input fields, and repositories that are not explicitly
