@@ -20,6 +20,7 @@ import {
   resolveLaneRunStatePath,
   writeLaneRunState,
 } from "../lane/index.js";
+import { containsUnsafePublicArtifactText } from "../safety/public-artifact.js";
 
 export type LaneExecutorMode = "deterministic-local-fake";
 export type LocalFakeExecutorOutcome = "succeeded" | "failed" | "blocked";
@@ -98,10 +99,6 @@ export interface PersistedLaneExecutorResult {
 const deterministicLocalFakeMode: LaneExecutorMode = "deterministic-local-fake";
 const fixtureNamePattern = /^[a-z0-9][a-z0-9._-]{2,127}$/;
 const localLaneIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{2,127}$/;
-const credentialPattern =
-  /(?:password|passwd|token|secret|credential|api[_-]?key)\s*[:=]\s*\S+/i;
-const unsafeLocalPathPattern =
-  /(?:^|[\s"'([{<>=])(?:\/(?:[^\s"'`<>]*)?|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:\\[^\s"'`<>]+|\\\\[^\\\s]+\\[^\\\s]+)/i;
 const redactedFixtureName = "[REDACTED_FIXTURE]";
 const unsupportedExecutorConfigurationReason = "Unsupported executor configuration.";
 
@@ -736,10 +733,7 @@ function collectFixtureIssues(fixture: LocalFakeExecutorFixture): readonly strin
 }
 
 function containsUnsafeFixtureText(value: string): boolean {
-  return (
-    credentialPattern.test(value) ||
-    unsafeLocalPathPattern.test(value)
-  );
+  return containsUnsafePublicArtifactText(value);
 }
 
 function replaceProtocolIdPrefix(value: string, prefix: string): string {

@@ -9,6 +9,9 @@ import {
   type EvidenceBundleRef,
   validateEvidenceBundleRef,
 } from "../protocol/index.js";
+import {
+  containsUnsafePublicArtifactText,
+} from "../safety/public-artifact.js";
 
 export type LaneArtifactOutputKind = "patch" | "pr-draft-intent";
 
@@ -120,10 +123,6 @@ const repoRelativePathPattern = /^(?:\.|[A-Za-z0-9._-][A-Za-z0-9._/-]*)$/;
 const artifactPathPattern = /^artifacts\/[A-Za-z0-9._~@/-]+$/;
 const mediaTypes = new Set<unknown>(["text/x-diff", "application/json", "text/markdown"]);
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
-const secretPattern =
-  /(?:password|passwd|token|secret|credential|api[_-]?key)\s*[:=]\s*[^\s"'`<>]+/i;
-const workstationLocalPathPattern =
-  /(?:^|[\s"'([{<>=])(?:\/(?!\/)(?:[A-Za-z0-9._~@-]+(?:\/[A-Za-z0-9._~@-]+)*\/?)|~(?:[/\\]|\s|$)|\$HOME(?:[/\\]|\s|$)|%USERPROFILE%(?:[/\\]|\s|$)|[A-Za-z]:[\\/][^"'`<>\s]+|\\\\[^"'`<>\s\\]+\\[^"'`<>\s\\]+(?:\\[^"'`<>\s\\]+)*)/i;
 
 export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): LaneArtifactOutput {
   const issues = collectCreateLaneArtifactOutputIssues(input);
@@ -456,8 +455,7 @@ function collectArtifactRefIssues(
     !artifactPathPattern.test(artifactRef.uri) ||
     artifactRef.uri.includes("..") ||
     artifactRef.uri.includes("//") ||
-    workstationLocalPathPattern.test(artifactRef.uri) ||
-    secretPattern.test(artifactRef.uri)
+    containsUnsafePublicArtifactText(artifactRef.uri)
   ) {
     issues.push({
       path: `${pathPrefix}.uri`,
@@ -486,8 +484,7 @@ function collectVerificationIntentIssues(
       (command) =>
         typeof command !== "string" ||
         command.length === 0 ||
-        workstationLocalPathPattern.test(command) ||
-        secretPattern.test(command),
+        containsUnsafePublicArtifactText(command),
     )
   ) {
     issues.push({
@@ -575,7 +572,7 @@ function isSafeBranchName(branchName: unknown): boolean {
 function containsUnsafePublicText(value: unknown): boolean {
   try {
     const serialized = JSON.stringify(value, (_key, child) => {
-      if (typeof child === "string" && (secretPattern.test(child) || workstationLocalPathPattern.test(child))) {
+      if (typeof child === "string" && containsUnsafePublicArtifactText(child)) {
         return "[UNSAFE]";
       }
 

@@ -224,6 +224,37 @@ test("rejects generic local absolute paths in public artifact metadata without e
   }
 });
 
+test("rejects secret-like public artifact values without echoing raw values", () => {
+  const unsafePublicValues = [
+    "Authorization: Bearer ghp_1234567890abcdef",
+    "set-cookie: sessionid=s3ssion-value; HttpOnly",
+    "-----BEGIN OPENSSH PRIVATE KEY-----",
+    "apiKey = sk-test-1234567890abcdef",
+  ];
+
+  for (const unsafePublicValue of unsafePublicValues) {
+    assert.throws(
+      () =>
+        createLaneArtifactOutput(
+          createSafePatchInput({
+            workItem: {
+              id: "workitem_issue60Patch01",
+              title: `LOOP-035: ${unsafePublicValue}`,
+              source: "github-issue-60",
+              status: "completed",
+            },
+          }),
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /raw secrets or workstation-local absolute paths/i);
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(unsafePublicValue)));
+        return true;
+      },
+    );
+  }
+});
+
 test("emits guarded PR draft intent without implying automatic merge authority", () => {
   const artifact = createLaneArtifactOutput({
     kind: "pr-draft-intent",

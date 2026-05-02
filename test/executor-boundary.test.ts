@@ -279,6 +279,28 @@ test("blocks unsafe fake fixture metadata without echoing raw secret or workstat
   });
 });
 
+test("blocks secret-like fake fixture diagnostics without echoing raw values", async () => {
+  await withPreparedLane(async (preparedContext) => {
+    const unsafeDiagnostic = "Authorization: Bearer ghp_1234567890abcdef";
+    const result = await invokeLaneExecutor({
+      executor: createDeterministicLocalFakeExecutor(),
+      mode: "deterministic-local-fake",
+      plan: createRunRequestExecutionPlan(request),
+      preparedContext,
+      completedAt: "2026-05-01T00:00:15Z",
+      fixture: {
+        name: "issue-40-auth-header",
+        outcome: "succeeded",
+        verificationSummary: unsafeDiagnostic,
+      },
+    });
+
+    assert.equal(result.status, "blocked");
+    assert.match(result.blockedReasons.join("\n"), /unsafe metadata/);
+    assert.doesNotMatch(JSON.stringify(result), new RegExp(escapeRegExp(unsafeDiagnostic)));
+  });
+});
+
 test("blocks common local workstation path forms in fake fixture metadata", async () => {
   await withPreparedLane(async (preparedContext) => {
     const fixtureTexts = [
@@ -309,6 +331,10 @@ test("blocks common local workstation path forms in fake fixture metadata", asyn
     }
   });
 });
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 
 test("fails closed when prepared lane context is missing or unprepared", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
