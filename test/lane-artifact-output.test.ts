@@ -33,6 +33,24 @@ const completedState = createLaneRunState({
   },
 });
 
+const completedStateWithoutEvidence = createLaneRunState({
+  id: "run_issue60PatchNoEvidence01",
+  workItemId: "workitem_issue60Patch01",
+  status: "completed",
+  revision: 4,
+  createdAt: "2026-05-02T00:00:00.000Z",
+  updatedAt: "2026-05-02T00:06:00.000Z",
+  journal: createLaneJournal({
+    id: "journal-issue60PatchNoEvidence01",
+    laneRunId: "run_issue60PatchNoEvidence01",
+    workItemId: "workitem_issue60Patch01",
+    entries: [],
+  }),
+  evidence: {
+    bundleRefs: [],
+  },
+});
+
 const safeEvidenceRef: EvidenceBundleRef = {
   schemaVersion: "eip.evidence-bundle-ref.v1",
   id: "evb_issue60PatchEvidence01",
@@ -158,6 +176,46 @@ test("emits guarded PR draft intent without implying automatic merge authority",
   assert.equal(artifact.autoMerge, false);
 });
 
+test("emits explicit unsupported fetchEvidence only when no evidence references are present", () => {
+  const artifact = createLaneArtifactOutput({
+    kind: "patch",
+    laneRunState: completedStateWithoutEvidence,
+    workItem: {
+      id: "workitem_issue60Patch01",
+      title: "LOOP-035: Add patch or PR draft artifact output",
+      source: "github-issue-60",
+      status: "completed",
+    },
+    branch: {
+      name: "codex/issue-60",
+      base: "main",
+    },
+    worktree: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    artifactRef: {
+      uri: "artifacts/patches/issue-60.patch",
+      mediaType: "text/x-diff",
+    },
+    agentOutcome,
+    verificationIntent: {
+      commands: ["npm test"],
+    },
+    capabilityEvidence: {
+      ...CODEX_AGENT_PROVIDER_CAPABILITY_EVIDENCE,
+      operations: {
+        ...CODEX_AGENT_PROVIDER_CAPABILITY_EVIDENCE.operations,
+        fetchEvidence: "unsupported",
+      },
+    },
+  });
+
+  assert.equal(artifact.evidence.fetchEvidence, "unsupported");
+  assert.deepEqual(artifact.evidence.references, []);
+  assert.equal(validateLaneArtifactOutput(artifact).ok, true);
+});
+
 test("fails closed for unsafe paths, unsupported evidence fetch, and unsupported PR draft scope", () => {
   assert.throws(
     () =>
@@ -179,7 +237,7 @@ test("fails closed for unsafe paths, unsupported evidence fetch, and unsupported
           path: ".",
         },
         artifactRef: {
-          uri: "/Users/example/secret.patch",
+          uri: "/tmp/unsafe.patch",
           mediaType: "text/x-diff",
         },
         agentOutcome,
@@ -265,6 +323,79 @@ test("fails closed for unsafe paths, unsupported evidence fetch, and unsupported
         },
       }),
     /owner-controlled repository with change-request intent support/i,
+  );
+});
+
+test("validates nested public artifact fields and fails closed on unsafe serialization", () => {
+  const artifact = createLaneArtifactOutput({
+    kind: "patch",
+    laneRunState: completedState,
+    workItem: {
+      id: "workitem_issue60Patch01",
+      title: "LOOP-035: Add patch or PR draft artifact output",
+      source: "github-issue-60",
+      status: "completed",
+    },
+    branch: {
+      name: "codex/issue-60",
+      base: "main",
+    },
+    worktree: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    artifactRef: {
+      uri: "artifacts/patches/issue-60.patch",
+      mediaType: "text/x-diff",
+    },
+    agentOutcome,
+    verificationIntent: {
+      commands: ["npm test"],
+    },
+    capabilityEvidence: CODEX_AGENT_PROVIDER_CAPABILITY_EVIDENCE,
+    evidenceRefs: [safeEvidenceRef],
+  });
+
+  const malformedNestedFields = validateLaneArtifactOutput({
+    ...artifact,
+    branch: {
+      name: "../escape",
+      base: "main",
+    },
+    worktree: {
+      kind: "repo-relative",
+      path: "../escape",
+    },
+    artifact: {
+      uri: "patches/issue-60.patch",
+      mediaType: "text/plain",
+    },
+    verificationIntent: {
+      commands: [""],
+    },
+  });
+
+  assert.equal(malformedNestedFields.ok, false);
+  assert.deepEqual(
+    malformedNestedFields.ok ? [] : malformedNestedFields.issues.map((issue) => issue.path),
+    [
+      "branch",
+      "worktree",
+      "artifact.uri",
+      "artifact.mediaType",
+      "verificationIntent.commands",
+    ],
+  );
+
+  const circularArtifact: Record<string, unknown> = { ...artifact };
+  circularArtifact.self = circularArtifact;
+
+  const circularValidation = validateLaneArtifactOutput(circularArtifact);
+
+  assert.equal(circularValidation.ok, false);
+  assert.match(
+    circularValidation.ok ? "" : circularValidation.issues.map((issue) => issue.message).join("\n"),
+    /raw secrets or workstation-local absolute paths/i,
   );
 });
 

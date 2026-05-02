@@ -132,7 +132,6 @@ export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): 
   }
 
   const fetchEvidence = input.capabilityEvidence.operations.fetchEvidence;
-  const referenceFetchEvidence = toReferenceFetchEvidence(fetchEvidence);
   const evidenceRefs = input.evidenceRefs ?? [];
   const artifact: LaneArtifactOutput = {
     schemaVersion: "ensen.loop.lane-artifact-output.v1",
@@ -162,7 +161,7 @@ export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): 
       references: evidenceRefs.map((evidenceRef) => ({
         evidenceBundleId: evidenceRef.id,
         uri: evidenceRef.uri,
-        fetchEvidence: referenceFetchEvidence,
+        fetchEvidence: toReferenceFetchEvidence(fetchEvidence),
       })),
     },
     createsPullRequest: false,
@@ -279,6 +278,11 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
     ];
   }
 
+  collectBranchIssues(issues, value.branch, "branch");
+  collectWorktreeIssues(issues, value.worktree, "worktree");
+  collectArtifactRefIssues(issues, value.artifact, "artifact");
+  collectVerificationIntentIssues(issues, value.verificationIntent, "verificationIntent");
+
   if (value.schemaVersion !== "ensen.loop.lane-artifact-output.v1") {
     issues.push({
       path: "schemaVersion",
@@ -357,10 +361,14 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
 
 function collectBranchIssues(
   issues: LaneArtifactOutputValidationIssue[],
-  branch: LaneArtifactBranchFacts,
+  branch: unknown,
   pathPrefix: string,
 ): void {
-  if (!isSafeBranchName(branch.name) || !isSafeBranchName(branch.base)) {
+  if (
+    !isRecord(branch) ||
+    !isSafeBranchName(branch.name) ||
+    !isSafeBranchName(branch.base)
+  ) {
     issues.push({
       path: pathPrefix,
       message: "Artifact output requires safe branch facts.",
@@ -370,11 +378,13 @@ function collectBranchIssues(
 
 function collectWorktreeIssues(
   issues: LaneArtifactOutputValidationIssue[],
-  worktree: LaneArtifactWorktreeFacts,
+  worktree: unknown,
   pathPrefix: string,
 ): void {
   if (
+    !isRecord(worktree) ||
     worktree.kind !== "repo-relative" ||
+    typeof worktree.path !== "string" ||
     !repoRelativePathPattern.test(worktree.path) ||
     worktree.path.split("/").some((segment) => segment === "..")
   ) {
@@ -387,9 +397,17 @@ function collectWorktreeIssues(
 
 function collectArtifactRefIssues(
   issues: LaneArtifactOutputValidationIssue[],
-  artifactRef: LaneArtifactRefInput,
+  artifactRef: unknown,
   pathPrefix: string,
 ): void {
+  if (!isRecord(artifactRef)) {
+    issues.push({
+      path: pathPrefix,
+      message: "Artifact output requires an artifact reference.",
+    });
+    return;
+  }
+
   if (
     typeof artifactRef.uri !== "string" ||
     !artifactPathPattern.test(artifactRef.uri) ||
@@ -414,10 +432,11 @@ function collectArtifactRefIssues(
 
 function collectVerificationIntentIssues(
   issues: LaneArtifactOutputValidationIssue[],
-  verificationIntent: LaneArtifactVerificationIntent,
+  verificationIntent: unknown,
   pathPrefix: string,
 ): void {
   if (
+    !isRecord(verificationIntent) ||
     !Array.isArray(verificationIntent.commands) ||
     verificationIntent.commands.length === 0 ||
     verificationIntent.commands.some(
@@ -494,8 +513,9 @@ function collectEvidenceRefIssues(
   }
 }
 
-function isSafeBranchName(branchName: string): boolean {
+function isSafeBranchName(branchName: unknown): boolean {
   return (
+    typeof branchName === "string" &&
     branchNamePattern.test(branchName) &&
     !branchName.includes("..") &&
     !branchName.includes("//") &&
@@ -510,13 +530,19 @@ function isSafeBranchName(branchName: string): boolean {
 }
 
 function containsUnsafePublicText(value: unknown): boolean {
-  return JSON.stringify(value, (_key, child) => {
-    if (typeof child === "string" && (secretPattern.test(child) || workstationLocalPathPattern.test(child))) {
-      return "[UNSAFE]";
-    }
+  try {
+    const serialized = JSON.stringify(value, (_key, child) => {
+      if (typeof child === "string" && (secretPattern.test(child) || workstationLocalPathPattern.test(child))) {
+        return "[UNSAFE]";
+      }
 
-    return child;
-  }).includes("[UNSAFE]");
+      return child;
+    });
+
+    return typeof serialized === "string" && serialized.includes("[UNSAFE]");
+  } catch {
+    return true;
+  }
 }
 
 function isSupportLevel(value: unknown): value is CodexProviderSupportLevel {
