@@ -85,6 +85,45 @@ const agentOutcome = createCodexAgentInvocationIntent({
   },
 });
 
+type CreateArtifactInput = Parameters<typeof createLaneArtifactOutput>[0];
+
+function createSafePatchInput(overrides: Partial<CreateArtifactInput> = {}): CreateArtifactInput {
+  return {
+    kind: "patch",
+    laneRunState: completedState,
+    workItem: {
+      id: "workitem_issue60Patch01",
+      title: "LOOP-035: Add patch or PR draft artifact output",
+      source: "github-issue-60",
+      status: "completed",
+    },
+    branch: {
+      name: "codex/issue-60",
+      base: "main",
+    },
+    worktree: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    artifactRef: {
+      uri: "artifacts/patches/issue-60.patch",
+      mediaType: "text/x-diff",
+    },
+    agentOutcome,
+    verificationIntent: {
+      commands: ["npm test"],
+    },
+    capabilityEvidence: CODEX_AGENT_PROVIDER_CAPABILITY_EVIDENCE,
+    evidenceRefs: [safeEvidenceRef],
+    ...overrides,
+  };
+}
+
+const posixRootPath = (...segments: readonly string[]): string => ["", ...segments].join("/");
+const windowsDrivePath = (...segments: readonly string[]): string => ["C:", ...segments].join("\\");
+const windowsUncPath = (...segments: readonly string[]): string => ["", "", ...segments].join("\\");
+const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 test("emits patch artifact metadata tied to completed lane state without raw evidence", () => {
   const artifact = createLaneArtifactOutput({
     kind: "patch",
@@ -131,6 +170,39 @@ test("emits patch artifact metadata tied to completed lane state without raw evi
     },
   ]);
   assert.doesNotMatch(JSON.stringify(artifact), /rawEvidence|customer data|token=/i);
+});
+
+test("rejects generic local absolute paths in public artifact metadata without echoing raw values", () => {
+  const unsafePublicPaths = [
+    posixRootPath("tmp"),
+    posixRootPath("var"),
+    posixRootPath("var", "folders", "private-output.log"),
+    posixRootPath("tmp", "private-output.log"),
+    windowsDrivePath("Temp", "private-output.log"),
+    windowsUncPath("build-host", "share", "private-output.log"),
+  ];
+
+  for (const unsafePublicPath of unsafePublicPaths) {
+    assert.throws(
+      () =>
+        createLaneArtifactOutput(
+          createSafePatchInput({
+            workItem: {
+              id: "workitem_issue60Patch01",
+              title: `LOOP-035: output captured at ${unsafePublicPath}`,
+              source: "github-issue-60",
+              status: "completed",
+            },
+          }),
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /raw secrets or workstation-local absolute paths/i);
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(unsafePublicPath)));
+        return true;
+      },
+    );
+  }
 });
 
 test("emits guarded PR draft intent without implying automatic merge authority", () => {
