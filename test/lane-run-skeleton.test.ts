@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
+import { access, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -119,7 +119,7 @@ test("prepares a local skeleton tied to lane id, branch intent, scope, and resta
 test("fails closed before mutation for unsafe branch, missing scope, symlink root, and disallowed repository", async () => {
   const roots = await createSkeletonRoots();
   const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-outside-repo-"));
-  const symlinkRoot = path.join(os.tmpdir(), `ensen-loop-repo-link-${process.pid}`);
+  const symlinkRoot = path.join(outsideRoot, "repo-symlink");
 
   try {
     await symlink(roots.repositoryRoot, symlinkRoot, "dir");
@@ -210,6 +210,50 @@ test("fails closed before mutation for unsafe branch, missing scope, symlink roo
     await roots.cleanup();
     await rm(outsideRoot, { recursive: true, force: true });
     await rm(symlinkRoot, { force: true });
+  }
+});
+
+test("preserves pre-existing local skeleton directories when state persistence fails", async () => {
+  const roots = await createSkeletonRoots();
+  const laneRunId = "run_existing_local_skeleton";
+  const existingWorkspacePath = path.join(roots.worktreeRoot, "lane-runs", laneRunId);
+  const existingStatePath = path.join(roots.stateRoot, "lane-runs", laneRunId);
+  const blockedStateFilePath = path.join(roots.stateRoot, "lane-runs", `${laneRunId}.json`);
+
+  try {
+    await mkdir(existingWorkspacePath, { recursive: true });
+    await mkdir(existingStatePath, { recursive: true });
+    await mkdir(blockedStateFilePath, { recursive: true });
+    await writeFile(path.join(existingWorkspacePath, "pre-existing.txt"), "keep workspace\n", "utf8");
+    await writeFile(path.join(existingStatePath, "pre-existing.txt"), "keep state\n", "utf8");
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId,
+          idempotencyKey: "issue-58-lane-skeleton-existing-fail",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-58-existing-fail",
+          authoritativeScope: {
+            ownerControlled: true,
+            repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryRoot: roots.repositoryRoot,
+          },
+        }),
+      /Lane run state file path must be a regular file/,
+    );
+
+    assert.equal((await lstat(existingWorkspacePath)).isDirectory(), true);
+    assert.equal((await lstat(existingStatePath)).isDirectory(), true);
+    assert.equal(await readFile(path.join(existingWorkspacePath, "pre-existing.txt"), "utf8"), "keep workspace\n");
+    assert.equal(await readFile(path.join(existingStatePath, "pre-existing.txt"), "utf8"), "keep state\n");
+  } finally {
+    await roots.cleanup();
   }
 });
 

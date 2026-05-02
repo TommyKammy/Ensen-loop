@@ -394,8 +394,12 @@ export async function planBranchLaneRunSkeleton(
   try {
     laneRunStatePath = await writeLaneRunState(stateRoot.inputPath, state);
   } catch (error) {
-    await rm(localSkeleton.workspacePath, { recursive: true, force: true });
-    await rm(localSkeleton.statePath, { recursive: true, force: true });
+    if (localSkeleton.created.workspace) {
+      await rm(localSkeleton.workspacePath, { recursive: true, force: true });
+    }
+    if (localSkeleton.created.state) {
+      await rm(localSkeleton.statePath, { recursive: true, force: true });
+    }
     throw error;
   }
 
