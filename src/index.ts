@@ -20,4 +20,5 @@ export * from "./core/index.js";
 export * from "./executor/index.js";
 export * from "./lane/index.js";
 export * from "./protocol/index.js";
+export * from "./scm/index.js";
 export * from "./work-item/index.js";
