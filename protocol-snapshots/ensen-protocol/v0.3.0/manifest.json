@@ -1,0 +1,24 @@
+{
+  "source": {
+    "repository": "TommyKammy/Ensen-protocol",
+    "releaseTag": "v0.3.0",
+    "protocolVersion": "0.3.0",
+    "sourceIssue": "https://github.com/TommyKammy/Ensen-protocol/issues/50",
+    "sourcePullRequest": "https://github.com/TommyKammy/Ensen-protocol/pull/51",
+    "sourceMergeCommit": "c33277e5a470883493f10f2c6951a0ca0d5818b0"
+  },
+  "policy": {
+    "updatePolicy": "Copied Track A guidance. Update only by replacing this directory from a tagged Ensen-protocol release.",
+    "runtimeDependency": false,
+    "integrationKind": "local conformance evidence",
+    "boundary": "owner-controlled repo / solo dogfood"
+  },
+  "includes": {
+    "guidance": [
+      "docs/integration/operational-evidence-profile.md"
+    ],
+    "fixtureLikeExamples": [
+      "fixtures/operational-evidence-profile/v1/valid/public-fixture-safe-profile.json"
+    ]
+  }
+}
