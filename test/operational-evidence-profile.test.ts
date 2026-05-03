@@ -103,6 +103,42 @@ test("fails closed when public operational evidence contains unsafe values", asy
   }
 });
 
+test("rejects private repository details in allowed public string values", async () => {
+  const profile = await readProfileFixture();
+  const privateRepositoryDetail = "github.com/acme/private-customer-repo";
+  const cases = [
+    {
+      label: "producer metadata producer",
+      mutate: (copy: Record<string, unknown>) => {
+        copy.producerMetadata = {
+          producer: privateRepositoryDetail,
+          command: "npm test",
+        };
+      },
+    },
+    {
+      label: "confidential reference guidance",
+      mutate: (copy: Record<string, unknown>) => {
+        copy.confidentialReferencePolicy = {
+          allowedInPublicFixture: false,
+          placeholder: "<evidence-root>/private-run/bundle.json",
+          guidance: `Use ${privateRepositoryDetail} for the private run.`,
+        };
+      },
+    },
+  ];
+
+  for (const testCase of cases) {
+    const result = validateOperationalEvidenceProfile(cloneWith(profile, testCase.mutate));
+
+    assert.equal(result.ok, false, testCase.label);
+    const diagnostics = result.ok
+      ? ""
+      : result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
+    assert.doesNotMatch(diagnostics, new RegExp(escapeRegExp(privateRepositoryDetail)));
+  }
+});
+
 test("does not treat public fixture-safe evidence and confidential references as interchangeable", async () => {
   const profile = await readProfileFixture();
   const result = validateOperationalEvidenceProfile(
