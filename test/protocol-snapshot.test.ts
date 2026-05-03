@@ -31,6 +31,9 @@ const expectedFixtureFamilies = [
   "run-status",
 ];
 
+const operationalEvidenceSecretLikeKeyPattern =
+  /(?:(["'])(?:token|secret|password|api[_-]?key)\1|(?:token|secret|password|api[_-]?key))\s*[:=]/i;
+
 async function readJson(relativePath: string): Promise<unknown> {
   return JSON.parse(await readFile(path.join(snapshotRoot, relativePath), "utf8")) as unknown;
 }
@@ -283,5 +286,14 @@ test("vendors the Ensen-protocol v0.3.0 Track A operational evidence profile fix
   const serializedProfile = JSON.stringify(profile);
   assert.doesNotMatch(serializedProfile, /\/Users\/|\/home\/|C:\\Users\\/);
   assert.doesNotMatch(serializedProfile, /:\/\/[^/?#\s]+:[^/?#\s]+@/);
-  assert.doesNotMatch(serializedProfile, /\b(?:token|secret|password|api[_-]?key)\b\s*[:=]/i);
+  assert.match(
+    JSON.stringify({ secret: "fixture-placeholder" }),
+    operationalEvidenceSecretLikeKeyPattern,
+    "fixture safety guard must reject quoted secret-like JSON key names",
+  );
+  assert.doesNotMatch(
+    serializedProfile,
+    operationalEvidenceSecretLikeKeyPattern,
+    "operational evidence fixture must not contain secret-like key names",
+  );
 });
