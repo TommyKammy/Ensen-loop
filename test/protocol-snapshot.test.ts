@@ -8,6 +8,11 @@ const snapshotRoot = path.join(
   "ensen-protocol",
   "v0.2.0",
 );
+const operationalEvidenceSnapshotRoot = path.join(
+  "protocol-snapshots",
+  "ensen-protocol",
+  "v0.3.0",
+);
 
 const expectedSchemas = [
   "schemas/eip.evidence-bundle-ref.v1.schema.json",
@@ -28,6 +33,12 @@ const expectedFixtureFamilies = [
 
 async function readJson(relativePath: string): Promise<unknown> {
   return JSON.parse(await readFile(path.join(snapshotRoot, relativePath), "utf8")) as unknown;
+}
+
+async function readOperationalEvidenceSnapshotJson(relativePath: string): Promise<unknown> {
+  return JSON.parse(
+    await readFile(path.join(operationalEvidenceSnapshotRoot, relativePath), "utf8"),
+  ) as unknown;
 }
 
 function assertJsonObject(value: unknown, message: string): asserts value is Record<string, unknown> {
@@ -201,4 +212,76 @@ test("includes protocol v0.2.0 capability variant fixtures without changing EIP 
     runResultSchema.$id,
     "https://eip.ensen.dev/schemas/eip.run-result.v1.schema.json",
   );
+});
+
+test("vendors the Ensen-protocol v0.3.0 Track A operational evidence profile fixture", async () => {
+  const manifest = await readOperationalEvidenceSnapshotJson("manifest.json");
+
+  assert.deepEqual(manifest, {
+    source: {
+      repository: "TommyKammy/Ensen-protocol",
+      releaseTag: "v0.3.0",
+      protocolVersion: "0.3.0",
+      sourceIssue: "https://github.com/TommyKammy/Ensen-protocol/issues/50",
+      sourcePullRequest: "https://github.com/TommyKammy/Ensen-protocol/pull/51",
+      sourceMergeCommit: "c33277e5a470883493f10f2c6951a0ca0d5818b0",
+    },
+    policy: {
+      updatePolicy:
+        "Copied Track A guidance. Update only by replacing this directory from a tagged Ensen-protocol release.",
+      runtimeDependency: false,
+      integrationKind: "local conformance evidence",
+      boundary: "owner-controlled repo / solo dogfood",
+    },
+    includes: {
+      guidance: ["docs/integration/operational-evidence-profile.md"],
+      fixtureLikeExamples: [
+        "fixtures/operational-evidence-profile/v1/valid/public-fixture-safe-profile.json",
+      ],
+    },
+  });
+
+  const profile = await readOperationalEvidenceSnapshotJson(
+    "fixtures/operational-evidence-profile/v1/valid/public-fixture-safe-profile.json",
+  );
+  assertJsonObject(profile, "operational evidence profile fixture must be a JSON object");
+  assert.equal(profile.profile, "operational-evidence-profile.v1");
+  assert.equal(profile.track, "X-Gate 3 Track A");
+  assert.equal(profile.boundary, "owner-controlled repo / solo dogfood");
+
+  const evidence = profile.evidence;
+  assertJsonObject(evidence, "operational evidence fixture evidence must be a JSON object");
+  assert.equal(evidence.dataClassification, "public");
+  assert.equal(evidence.referenceKind, "publicFixtureSafeArtifact");
+  assert.equal(evidence.uri, "artifacts/evidence/synthetic-run/bundle.json");
+
+  const checksum = evidence.checksum;
+  assertJsonObject(checksum, "operational evidence fixture checksum must be a JSON object");
+  assert.equal(checksum.algorithm, "sha256");
+  assert.equal(
+    checksum.value,
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+  );
+
+  const producerMetadata = profile.producerMetadata;
+  assertJsonObject(
+    producerMetadata,
+    "operational evidence fixture producerMetadata must be a JSON object",
+  );
+  assert.equal(producerMetadata.producer, "ensen-loop");
+  assert.equal(producerMetadata.command, "npm test");
+  assert.equal(profile.retentionHint, "publicFixture");
+
+  const confidentialReferencePolicy = profile.confidentialReferencePolicy;
+  assertJsonObject(
+    confidentialReferencePolicy,
+    "operational evidence fixture confidentialReferencePolicy must be a JSON object",
+  );
+  assert.equal(confidentialReferencePolicy.allowedInPublicFixture, false);
+  assert.equal(confidentialReferencePolicy.placeholder, "<evidence-root>/private-run/bundle.json");
+
+  const serializedProfile = JSON.stringify(profile);
+  assert.doesNotMatch(serializedProfile, /\/Users\/|\/home\/|C:\\Users\\/);
+  assert.doesNotMatch(serializedProfile, /:\/\/[^/?#\s]+:[^/?#\s]+@/);
+  assert.doesNotMatch(serializedProfile, /\b(?:token|secret|password|api[_-]?key)\b\s*[:=]/i);
 });
