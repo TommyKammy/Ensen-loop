@@ -44,6 +44,8 @@ export interface CodexAgentDryRunProof {
   readonly requestId: string;
   readonly correlationId: string;
   readonly completedAt: string;
+  readonly scope: CodexAgentScopeBinding;
+  readonly idempotencyBinding: CodexAgentIdempotencyBinding;
 }
 
 export interface CodexAgentOperatorApprovalPoint {
@@ -209,6 +211,16 @@ function validateExecuteBoundary(input: CreateCodexAgentInvocationIntentInput): 
 
   if (!isSafeDryRunProof(input.dryRunProof)) {
     diagnostics.push("Codex dogfood execute intent requires prior dry-run proof.");
+  } else {
+    if (!isSameScopeBinding(input.dryRunProof.scope, input.scope)) {
+      diagnostics.push("Codex dogfood execute dry-run proof scope does not match execute scope.");
+    }
+
+    if (!isSameIdempotencyBinding(input.dryRunProof.idempotencyBinding, input.idempotencyBinding)) {
+      diagnostics.push(
+        "Codex dogfood execute dry-run proof idempotency binding does not match execute idempotency binding.",
+      );
+    }
   }
 
   if (!isSafeOperatorApproval(input.operatorApproval)) {
@@ -257,8 +269,29 @@ function isSafeDryRunProof(proof: CodexAgentDryRunProof | undefined): proof is C
     proof.outcome === "planned" &&
     /^req_[A-Za-z0-9._:-]{12,160}$/.test(proof.requestId) &&
     /^corr_[A-Za-z0-9._:-]{12,160}$/.test(proof.correlationId) &&
-    isMillisecondIsoTimestamp(proof.completedAt)
+    isMillisecondIsoTimestamp(proof.completedAt) &&
+    isSafeScope(proof.scope) &&
+    isSafeIdempotencyBinding(proof.idempotencyBinding)
   );
+}
+
+function isSameScopeBinding(
+  left: CodexAgentScopeBinding,
+  right: CodexAgentScopeBinding | undefined,
+): boolean {
+  return (
+    right !== undefined &&
+    left.owner === right.owner &&
+    left.repository === right.repository &&
+    left.issueNumber === right.issueNumber
+  );
+}
+
+function isSameIdempotencyBinding(
+  left: CodexAgentIdempotencyBinding,
+  right: CodexAgentIdempotencyBinding | undefined,
+): boolean {
+  return right !== undefined && left.key === right.key && left.scopeFingerprint === right.scopeFingerprint;
 }
 
 function isSafeOperatorApproval(

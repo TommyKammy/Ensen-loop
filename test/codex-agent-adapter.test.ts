@@ -97,6 +97,15 @@ test("separates guarded Codex execute intent from dry-run preview after human ap
       requestId: "req_issue59DryRunProof01",
       correlationId: "corr_issue59DryRunProof01",
       completedAt: "2026-05-02T00:05:00.000Z",
+      scope: {
+        owner: "TommyKammy",
+        repository: "Ensen-loop",
+        issueNumber: 59,
+      },
+      idempotencyBinding: {
+        key: "issue-59-codex-submit",
+        scopeFingerprint: "TommyKammy-Ensen-loop-59",
+      },
     },
     operatorApproval: {
       actorType: "human",
@@ -118,6 +127,98 @@ test("separates guarded Codex execute intent from dry-run preview after human ap
     mergeAuthority: "human-only",
   });
   assert.deepEqual(intent.diagnostics, []);
+});
+
+test("blocks dogfood execute intent when dry-run proof belongs to a different issue scope", () => {
+  const intent = createCodexAgentInvocationIntent({
+    mode: "execute",
+    capabilityEvidence,
+    workspace: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    allowedExecutionPosture: "execute-enabled",
+    scope: {
+      owner: "TommyKammy",
+      repository: "Ensen-loop",
+      issueNumber: 59,
+    },
+    idempotencyBinding: {
+      key: "issue-59-codex-submit",
+      scopeFingerprint: "TommyKammy-Ensen-loop-59",
+    },
+    dryRunProof: {
+      mode: "dry-run",
+      outcome: "planned",
+      requestId: "req_issue58DryRunProof01",
+      correlationId: "corr_issue58DryRunProof01",
+      completedAt: "2026-05-02T00:05:00.000Z",
+      scope: {
+        owner: "TommyKammy",
+        repository: "Ensen-loop",
+        issueNumber: 58,
+      },
+      idempotencyBinding: {
+        key: "issue-59-codex-submit",
+        scopeFingerprint: "TommyKammy-Ensen-loop-59",
+      },
+    },
+    operatorApproval: {
+      actorType: "human",
+      decision: "execute-after-dry-run",
+      approvedAt: "2026-05-02T00:06:00.000Z",
+    },
+  });
+
+  assert.equal(intent.ok, false);
+  assert.equal(intent.outcome, "blocked");
+  assert.match(intent.diagnostics.join("\n"), /dry-run proof scope does not match execute scope/i);
+});
+
+test("blocks dogfood execute intent when dry-run proof idempotency binding differs", () => {
+  const intent = createCodexAgentInvocationIntent({
+    mode: "execute",
+    capabilityEvidence,
+    workspace: {
+      kind: "repo-relative",
+      path: ".",
+    },
+    allowedExecutionPosture: "execute-enabled",
+    scope: {
+      owner: "TommyKammy",
+      repository: "Ensen-loop",
+      issueNumber: 59,
+    },
+    idempotencyBinding: {
+      key: "issue-59-codex-submit",
+      scopeFingerprint: "TommyKammy-Ensen-loop-59",
+    },
+    dryRunProof: {
+      mode: "dry-run",
+      outcome: "planned",
+      requestId: "req_issue59DryRunProof01",
+      correlationId: "corr_issue59DryRunProof01",
+      completedAt: "2026-05-02T00:05:00.000Z",
+      scope: {
+        owner: "TommyKammy",
+        repository: "Ensen-loop",
+        issueNumber: 59,
+      },
+      idempotencyBinding: {
+        key: "issue-59-codex-submit",
+        scopeFingerprint: "TommyKammy-Ensen-loop-replayed",
+      },
+    },
+    operatorApproval: {
+      actorType: "human",
+      decision: "execute-after-dry-run",
+      approvedAt: "2026-05-02T00:06:00.000Z",
+    },
+  });
+
+  assert.equal(intent.ok, false);
+  assert.equal(intent.outcome, "blocked");
+  assert.match(intent.diagnostics.join("\n"), /dry-run proof idempotency binding does not match/i);
 });
 
 test("allows repo-relative workspace names that contain literal double-dot text", () => {

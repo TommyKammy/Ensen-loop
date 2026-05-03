@@ -89,6 +89,15 @@ const agentOutcome = createCodexAgentInvocationIntent({
     requestId: "req_issue60DryRunProof01",
     correlationId: "corr_issue60DryRunProof01",
     completedAt: "2026-05-02T00:04:00.000Z",
+    scope: {
+      owner: "TommyKammy",
+      repository: "Ensen-loop",
+      issueNumber: 60,
+    },
+    idempotencyBinding: {
+      key: "issue-60-codex-submit",
+      scopeFingerprint: "TommyKammy-Ensen-loop-60",
+    },
   },
   operatorApproval: {
     actorType: "human",
