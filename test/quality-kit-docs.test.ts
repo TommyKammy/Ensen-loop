@@ -150,3 +150,48 @@ test("documents dogfood rollback and cleanup boundaries", async () => {
     /customer|regulated|ERPNext|electronic signature|batch release|final disposition/i,
   );
 });
+
+test("documents Loop X-Gate 3 Track A closure evidence", async () => {
+  const readme = await readMarkdown("README.md");
+
+  for (const phrase of [
+    "X-Gate 3 Track A Closure Evidence",
+    "owner-controlled repo / solo dogfood",
+    "LOOP-X3A-001",
+    "LOOP-X3A-002",
+    "LOOP-X3A-003",
+    "LOOP-X3A-004",
+    "FOLLOW-UP: Bind dry-run proof to dogfood execute scope",
+    "LOOP-X3A-005",
+    "LOOP-X3A-006",
+    "Ensen-protocol v0.3.0",
+    "TommyKammy/Ensen-protocol#50",
+    "TommyKammy/Ensen-protocol#51",
+    "c33277e5a470883493f10f2c6951a0ca0d5818b0",
+    "protocol-snapshots/ensen-protocol/v0.3.0",
+    "local conformance evidence",
+    "no Ensen-flow runtime behavior",
+    "no Ensen-protocol runtime dependency",
+    "X-Gate 4 dogfood readiness",
+    "Flow Track A closure",
+  ]) {
+    assert.match(readme, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  for (const trackBNonGoal of [
+    "customer repos",
+    "ERPNext live connector",
+    "regulated data",
+    "electronic signatures",
+    "batch release",
+    "final disposition",
+    "compliance guarantees",
+  ]) {
+    assert.match(readme, new RegExp(trackBNonGoal, "i"));
+  }
+
+  assert.doesNotMatch(
+    readme,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});

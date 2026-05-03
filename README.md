@@ -24,6 +24,27 @@ Phase 4 patch and PR draft artifact output is documented in [docs/reference/lane
 
 The copied Ensen-protocol v0.2.0 schema and conformance fixture snapshot is documented in [protocol-snapshots/ensen-protocol/v0.2.0/README.md](protocol-snapshots/ensen-protocol/v0.2.0/README.md). It is repo-owned fixture data, not a mutable shared runtime dependency. Protocol release `v0.2.0` still carries `eip.*.v1` artifact schemas; do not rename those artifacts to `v2` unless a future protocol release defines new schema majors.
 
+The copied Ensen-protocol v0.3.0 operational evidence profile snapshot is documented in [protocol-snapshots/ensen-protocol/v0.3.0/README.md](protocol-snapshots/ensen-protocol/v0.3.0/README.md). It is local conformance evidence for X-Gate 3 Track A artifact hygiene, not an Ensen-protocol runtime dependency.
+
+## X-Gate 3 Track A Closure Evidence
+
+Loop-side X-Gate 3 Track A is closed for the owner-controlled repo / solo dogfood boundary. The closure is limited to Loop-local safety, dry-run proof, copied Protocol guidance intake, and conformance checks. It does not create customer repo execution, automatic merge, compliance claims, Ensen-flow runtime behavior, or Protocol runtime imports. This closure records no Ensen-flow runtime behavior.
+
+The completed Loop issue set is:
+
+- #77, Epic: X-Gate 3 Track A Loop dogfood safety.
+- #81, LOOP-X3A-001: Add owner-controlled repo allowlist for dogfood lanes.
+- #78, LOOP-X3A-002: Enforce dry-run-first and human merge decision for dogfood lanes.
+- #80, LOOP-X3A-003: Add dogfood artifact safety checks.
+- #79, LOOP-X3A-004: Add dogfood rollback and cleanup runbook.
+- #86, FOLLOW-UP: Bind dry-run proof to dogfood execute scope.
+- #88, LOOP-X3A-005: Vendor operational evidence profile fixture for Track A hygiene.
+- #89, LOOP-X3A-006: Add Loop conformance checks for operational evidence profile.
+
+The Protocol dependency is evidence-only: Ensen-protocol v0.3.0, TommyKammy/Ensen-protocol#50, TommyKammy/Ensen-protocol#51, merge commit `c33277e5a470883493f10f2c6951a0ca0d5818b0`. The copied snapshot under `protocol-snapshots/ensen-protocol/v0.3.0` is repo-owned guidance and fixture-like data used by local conformance evidence; Ensen-loop remains buildable, testable, and operable without an Ensen-protocol checkout, service, package, fixture path, or runtime dependency. This closure records no Ensen-protocol runtime dependency.
+
+X-Gate 4 dogfood readiness still depends on the broader cross-repo checklist, including Flow Track A closure and the general roadmap update. Track B remains future work: customer repos, ERPNext live connector, regulated data, electronic signatures, batch release, final disposition, and compliance guarantees.
+
 ## Commands
 
 ```sh
