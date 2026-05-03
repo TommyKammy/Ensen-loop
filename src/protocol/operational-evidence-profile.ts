@@ -62,6 +62,10 @@ const privateScopeKeyPattern =
   /^(?:customer|customerId|organization|owner|privateRepo|repository|repositorySlug|repo|tenant|tenantId)$/i;
 const credentialUriAuthorityPattern =
   /^[A-Za-z][A-Za-z0-9+.-]*:\/\/[^/?#\s]*[^/?#\s:@]+:[^/?#\s:@]+@/;
+const privateRepositoryDetailPatterns: readonly RegExp[] = [
+  /\b(?:https?:\/\/)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*(?=$|[\s"'`<>)\]}?,.;:/#])/i,
+  /\bgit@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*(?:\.git)?(?=$|[\s"'`<>)\]}?,.;:/#])/i,
+];
 const publicEvidenceUriPattern =
   /^artifacts\/evidence\/(?!.*(?:^|\/)\.\.(?:\/|$))[A-Za-z0-9._~@/-]+$/;
 const contentTypePattern =
@@ -377,8 +381,13 @@ function containsUnsafePublicString(value: string): boolean {
 
   return (
     containsUnsafePublicArtifactText(placeholderSafeValue) ||
-    credentialUriAuthorityPattern.test(placeholderSafeValue)
+    credentialUriAuthorityPattern.test(placeholderSafeValue) ||
+    containsPrivateRepositoryDetail(placeholderSafeValue)
   );
+}
+
+function containsPrivateRepositoryDetail(value: string): boolean {
+  return privateRepositoryDetailPatterns.some((pattern) => pattern.test(value));
 }
 
 function containsUnsafeKey(value: unknown): boolean {
