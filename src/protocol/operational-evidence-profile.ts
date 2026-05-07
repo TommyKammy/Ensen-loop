@@ -337,8 +337,7 @@ function collectPublicSerializationIssues(
   if (containsUnsafePublicString(serialized)) {
     issues.push({
       path: "$",
-      message:
-        "Public operational evidence profile must not contain secrets, credential URIs, or workstation-local paths.",
+      message: "Public operational evidence profile contains unsafe public strings.",
     });
   }
 }

@@ -139,6 +139,27 @@ test("rejects private repository details in allowed public string values", async
   }
 });
 
+test("uses neutral root diagnostics for unsafe public profile strings", async () => {
+  const profile = await readProfileFixture();
+  const privateRepositoryDetail = "github.com/acme/private-customer-repo";
+  const result = validateOperationalEvidenceProfile(
+    cloneWith(profile, (copy) => {
+      copy.nonGoals = ["external repository input", privateRepositoryDetail];
+    }),
+  );
+
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.ok ? [] : result.issues.filter((issue) => issue.path === "$").map((issue) => issue.message),
+    ["Public operational evidence profile contains unsafe public strings."],
+  );
+
+  const diagnostics = result.ok
+    ? ""
+    : result.issues.map((issue) => `${issue.path}: ${issue.message}`).join("\n");
+  assert.doesNotMatch(diagnostics, new RegExp(escapeRegExp(privateRepositoryDetail)));
+});
+
 test("does not treat public fixture-safe evidence and confidential references as interchangeable", async () => {
   const profile = await readProfileFixture();
   const result = validateOperationalEvidenceProfile(
