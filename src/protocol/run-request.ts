@@ -53,7 +53,13 @@ export interface RunRequest {
   readonly createdAt: string;
   readonly target?: RunRequestTarget;
   readonly policyContext?: RunRequestPolicyContext;
-  readonly dataClassification?: "public" | "internal" | "confidential" | "restricted";
+  readonly dataClassification?:
+    | "public"
+    | "internal"
+    | "confidential"
+    | "customer-confidential"
+    | "regulated"
+    | "restricted";
   readonly extensions?: Record<string, unknown>;
 }
 
@@ -212,6 +218,8 @@ const dataClassifications = new Set<unknown>([
   "public",
   "internal",
   "confidential",
+  "customer-confidential",
+  "regulated",
   "restricted",
 ]);
 
@@ -438,7 +446,7 @@ function collectRunRequestIssues(value: unknown): readonly RunRequestValidationI
     "dataClassification",
     value.dataClassification,
     dataClassifications,
-    "dataClassification must be one of: public, internal, confidential, restricted.",
+    "dataClassification must be one of: public, internal, confidential, customer-confidential, regulated, restricted.",
     true,
   );
   collectExtensionsIssues(issues, value.extensions);

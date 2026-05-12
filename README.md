@@ -26,6 +26,8 @@ The copied Ensen-protocol v0.2.0 schema and conformance fixture snapshot is docu
 
 The copied Ensen-protocol v0.3.0 operational evidence profile snapshot is documented in [protocol-snapshots/ensen-protocol/v0.3.0/README.md](protocol-snapshots/ensen-protocol/v0.3.0/README.md). It is local conformance evidence for X-Gate 3 Track A artifact hygiene, not an Ensen-protocol runtime dependency.
 
+The copied Ensen-protocol v0.4.0 Track B evidence boundary snapshot is documented in [protocol-snapshots/ensen-protocol/v0.4.0/README.md](protocol-snapshots/ensen-protocol/v0.4.0/README.md). It records customer / regulated classification vocabulary and public-safe fixture examples for protocol intake only. It is not production regulated workflow support, ERPNext integration, electronic signature handling, batch release, final disposition, customer repository execution, or a compliance guarantee.
+
 ## X-Gate 3 Track A Closure Evidence
 
 Loop-side X-Gate 3 Track A is closed for the owner-controlled repo / solo dogfood boundary. The closure is limited to Loop-local safety, dry-run proof, copied Protocol guidance intake, and conformance checks. It does not create customer repo execution, automatic merge, compliance claims, Ensen-flow runtime behavior, or Protocol runtime imports. This closure records no Ensen-flow runtime behavior.

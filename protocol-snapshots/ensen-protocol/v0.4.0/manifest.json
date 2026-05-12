@@ -1,0 +1,29 @@
+{
+  "source": {
+    "repository": "TommyKammy/Ensen-protocol",
+    "releaseTag": "v0.4.0",
+    "protocolVersion": "0.4.0",
+    "sourceRelease": "https://github.com/TommyKammy/Ensen-protocol/releases/tag/v0.4.0",
+    "sourceReleaseCommit": "f6c3c5bee2574c8660f6954fe58a9e7625daad12",
+    "sourceTagObject": "3e3eddbd0ca654644f7e2676361ff60a80bb972a",
+    "sourceImplementationCommits": ["6fb03f7", "4e16a28", "7caf6a2"]
+  },
+  "policy": {
+    "updatePolicy": "Copied Track B guidance. Update only by replacing this directory from a tagged Ensen-protocol release.",
+    "runtimeDependency": false,
+    "integrationKind": "local conformance evidence",
+    "boundary": "customer / regulated evidence planning",
+    "productionRegulatedWorkflowSupport": false
+  },
+  "includes": {
+    "guidance": [
+      "docs/integration/customer-regulated-data-classification-profile.md",
+      "docs/integration/approval-and-draft-evidence-semantics.md"
+    ],
+    "fixtureLikeExamples": [
+      "fixtures/customer-regulated-data-classification/v1/valid/public-safe-profile.json",
+      "fixtures/approval-evidence-semantics/v1/valid/public-safe-draft-action.json"
+    ],
+    "schemaEvidence": ["schemas/eip.common.v1.schema.json"]
+  }
+}

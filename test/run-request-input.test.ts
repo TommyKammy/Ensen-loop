@@ -204,6 +204,22 @@ test("accepts non-repository RunRequest targets with protocol prefixed ids", asy
   }
 });
 
+test("accepts Track B customer and regulated RunRequest classification labels", async () => {
+  const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
+  const base = await readJson(fixture);
+  assertRecord(base, "fixture");
+
+  for (const dataClassification of ["public", "internal", "customer-confidential", "regulated"]) {
+    const request = structuredClone(base);
+    assertRecord(request, "request");
+    request.dataClassification = dataClassification;
+
+    const result = validateRunRequest(request);
+
+    assert.equal(result.ok, true, `${dataClassification} classification must be accepted`);
+  }
+});
+
 test("rejects malformed and non-HTTPS RunRequest work item URLs", async () => {
   const fixture = path.join(runRequestFixtureRoot, "valid", "github-issue-request.json");
   const base = await readJson(fixture);

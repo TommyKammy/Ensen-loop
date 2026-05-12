@@ -183,6 +183,30 @@ test("does not treat public fixture-safe evidence and confidential references as
   );
 });
 
+test("rejects Track B classifications in public operational evidence fixtures", async () => {
+  const profile = await readProfileFixture();
+
+  for (const dataClassification of ["customer-confidential", "regulated"]) {
+    const result = validateOperationalEvidenceProfile(
+      cloneWith(profile, (copy) => {
+        copy.evidence = {
+          dataClassification,
+          referenceKind: "publicFixtureSafeArtifact",
+          uri: "artifacts/evidence/synthetic-run/bundle.json",
+        };
+      }),
+    );
+
+    assert.equal(result.ok, false, `${dataClassification} must not be accepted in public fixtures`);
+    assert.ok(
+      result.ok
+        ? false
+        : result.issues.some((issue) => issue.path === "evidence.dataClassification"),
+      `${dataClassification} rejection must identify the evidence classification boundary`,
+    );
+  }
+});
+
 test("keeps checksum and retention hints within the public conformance profile", async () => {
   const profile = await readProfileFixture();
   const result = validateOperationalEvidenceProfile(
