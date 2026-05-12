@@ -89,14 +89,18 @@ export interface PreparedLocalLaneWorkspace {
 }
 
 export type BranchLaneRunSkeletonMode = "dry-run" | "prepare";
+export type LaneRepositoryClassification = "owner-controlled-dogfood" | "customer-repository";
 
 export interface AuthoritativeLaneRunScope {
-  readonly ownerControlled: true;
+  readonly repositoryClassification?: LaneRepositoryClassification;
+  readonly ownerControlled?: true;
   readonly ownerIdentity?: string;
   readonly repositoryId: string;
   readonly repositorySlug: string;
   readonly repositoryUrl?: string;
   readonly repositoryRoot: string;
+  readonly customerRepositoryPurpose?: string;
+  readonly customerApprovalNote?: string;
 }
 
 export interface OwnerControlledDogfoodRepositoryAllowlistEntry {
@@ -105,6 +109,15 @@ export interface OwnerControlledDogfoodRepositoryAllowlistEntry {
   readonly repositorySlug: string;
   readonly repositoryUrl: string;
   readonly repositoryRoot: string;
+}
+
+export interface CustomerRepositoryAllowlistEntry {
+  readonly repositoryClassification: "customer-repository";
+  readonly owner: string;
+  readonly repo: string;
+  readonly repositoryRoot: string;
+  readonly purpose: string;
+  readonly approvalNote: string;
 }
 
 export interface PlanBranchLaneRunSkeletonInput {
@@ -120,6 +133,7 @@ export interface PlanBranchLaneRunSkeletonInput {
   readonly authoritativeScope?: AuthoritativeLaneRunScope;
   readonly allowedRepositoryRoots?: readonly string[];
   readonly dogfoodRepositoryAllowlist?: readonly OwnerControlledDogfoodRepositoryAllowlistEntry[];
+  readonly customerRepositoryAllowlist?: readonly CustomerRepositoryAllowlistEntry[];
   readonly recordedAt?: string;
 }
 
@@ -132,6 +146,7 @@ export interface BranchLaneRunSkeleton {
   readonly laneRunId: string;
   readonly workItem: WorkItem;
   readonly repository: {
+    readonly classification: LaneRepositoryClassification;
     readonly id: string;
     readonly slug: string;
     readonly url?: string;
@@ -292,6 +307,7 @@ export async function planBranchLaneRunSkeleton(
   }
 
   validateAuthoritativeLaneRunScope(scope);
+  const repositoryClassification = resolveLaneRepositoryClassification(scope);
 
   const repositoryRoot = await resolveCanonicalRepositoryRoot(input.repositoryRoot);
   const scopedRepositoryRoot = await resolveCanonicalRepositoryRoot(scope.repositoryRoot);
@@ -305,12 +321,21 @@ export async function planBranchLaneRunSkeleton(
   }
 
   if (mode === "prepare") {
-    await assertDogfoodRepositoryAllowlisted({
-      scope,
-      repositoryRealPath: repositoryRoot.realPath,
-      allowlist: input.dogfoodRepositoryAllowlist,
-      required: true,
-    });
+    if (repositoryClassification === "customer-repository") {
+      await assertCustomerRepositoryAllowlisted({
+        scope,
+        repositoryRealPath: repositoryRoot.realPath,
+        allowlist: input.customerRepositoryAllowlist,
+        required: true,
+      });
+    } else {
+      await assertDogfoodRepositoryAllowlisted({
+        scope,
+        repositoryRealPath: repositoryRoot.realPath,
+        allowlist: input.dogfoodRepositoryAllowlist,
+        required: true,
+      });
+    }
   }
 
   const worktreeRoot = await resolveCanonicalLocalLaneRoot("workspace", input.worktreeRoot);
@@ -330,12 +355,7 @@ export async function planBranchLaneRunSkeleton(
     opensChangeRequest: false,
     laneRunId,
     workItem: { ...input.workItem },
-    repository: {
-      id: scope.repositoryId,
-      slug: scope.repositorySlug,
-      url: scope.repositoryUrl,
-      ownerIdentity: scope.ownerIdentity,
-    },
+    repository: createLaneRepositoryProjection(scope, repositoryClassification),
     branch: {
       name: input.branchName,
       base: input.baseBranch ?? "main",
@@ -374,6 +394,36 @@ export async function planBranchLaneRunSkeleton(
     workItemId: input.workItem.id,
   });
   const recordedAt = input.recordedAt ?? new Date().toISOString();
+  const scopeJournalEntries =
+    repositoryClassification === "customer-repository"
+      ? [
+          {
+            id: `${laneRunId}-scope`,
+            recordedAt,
+            kind: "hypothesis" as const,
+            message: `authoritative scope: customer-repository ${scope.repositoryId}`,
+          },
+          {
+            id: `${laneRunId}-customer-allowlist`,
+            recordedAt,
+            kind: "hypothesis" as const,
+            message: "customer repo allowlist matched: owner, repo, path, purpose, and approval note",
+          },
+        ]
+      : [
+          {
+            id: `${laneRunId}-scope`,
+            recordedAt,
+            kind: "hypothesis" as const,
+            message: `authoritative scope: ${scope.repositorySlug} ${scope.repositoryId}`,
+          },
+          {
+            id: `${laneRunId}-dogfood-allowlist`,
+            recordedAt,
+            kind: "hypothesis" as const,
+            message: `dogfood allowlist matched: ${scope.repositorySlug} ownerIdentity=${scope.ownerIdentity ?? "<missing>"}`,
+          },
+        ];
   const state = createLaneRunState({
     id: laneRunId,
     workItemId: input.workItem.id,
@@ -386,18 +436,7 @@ export async function planBranchLaneRunSkeleton(
       laneRunId,
       workItemId: input.workItem.id,
       entries: [
-        {
-          id: `${laneRunId}-scope`,
-          recordedAt,
-          kind: "hypothesis",
-          message: `authoritative scope: ${scope.repositorySlug} ${scope.repositoryId}`,
-        },
-        {
-          id: `${laneRunId}-dogfood-allowlist`,
-          recordedAt,
-          kind: "hypothesis",
-          message: `dogfood allowlist matched: ${scope.repositorySlug} ownerIdentity=${scope.ownerIdentity ?? "<missing>"}`,
-        },
+        ...scopeJournalEntries,
         {
           id: `${laneRunId}-branch`,
           recordedAt,
@@ -605,14 +644,52 @@ function assertSafeBranchName(branchName: string): void {
 }
 
 function validateAuthoritativeLaneRunScope(scope: AuthoritativeLaneRunScope): void {
+  const classification = resolveLaneRepositoryClassification(scope);
+
   if (
-    scope.ownerControlled !== true ||
     !isNonEmptyString(scope.repositoryId) ||
     !repositorySlugPattern.test(scope.repositorySlug) ||
     !isNonEmptyString(scope.repositoryRoot)
   ) {
     throw new Error("Authoritative repository scope is malformed.");
   }
+
+  if (classification === "owner-controlled-dogfood" && scope.ownerControlled !== true) {
+    throw new Error("Authoritative repository scope is malformed.");
+  }
+
+  if (classification === "customer-repository") {
+    const scopeIssues = collectCustomerScopeIssues(scope);
+
+    if (scopeIssues.length > 0) {
+      throw new Error(`Customer repository scope is missing or malformed: ${scopeIssues.join(", ")}.`);
+    }
+  }
+}
+
+function resolveLaneRepositoryClassification(scope: AuthoritativeLaneRunScope): LaneRepositoryClassification {
+  return scope.repositoryClassification ?? "owner-controlled-dogfood";
+}
+
+function createLaneRepositoryProjection(
+  scope: AuthoritativeLaneRunScope,
+  classification: LaneRepositoryClassification,
+): BranchLaneRunSkeleton["repository"] {
+  if (classification === "customer-repository") {
+    return {
+      classification,
+      id: scope.repositoryId,
+      slug: "<customer-repository>",
+    };
+  }
+
+  return {
+    classification,
+    id: scope.repositoryId,
+    slug: scope.repositorySlug,
+    url: scope.repositoryUrl,
+    ownerIdentity: scope.ownerIdentity,
+  };
 }
 
 async function assertRepositoryRootAllowlisted(
@@ -674,6 +751,53 @@ async function assertDogfoodRepositoryAllowlisted(input: {
   );
 }
 
+async function assertCustomerRepositoryAllowlisted(input: {
+  readonly scope: AuthoritativeLaneRunScope;
+  readonly repositoryRealPath: string;
+  readonly allowlist?: readonly CustomerRepositoryAllowlistEntry[];
+  readonly required: boolean;
+}): Promise<void> {
+  if (!Array.isArray(input.allowlist)) {
+    if (input.required) {
+      throw new Error("Customer repository allowlist is required before customer lane preparation.");
+    }
+
+    return;
+  }
+
+  const scopeIssues = collectCustomerScopeIssues(input.scope);
+  if (scopeIssues.length > 0) {
+    throw new Error(`Customer repository scope is missing or malformed: ${scopeIssues.join(", ")}.`);
+  }
+
+  const entryIssues = collectCustomerAllowlistEntryIssues(input.allowlist);
+  if (entryIssues.length > 0) {
+    throw new Error(`Customer repository allowlist is malformed: ${entryIssues.join(", ")}.`);
+  }
+
+  const scopeSlug = splitRepositorySlug(input.scope.repositorySlug);
+
+  for (const entry of input.allowlist) {
+    if (
+      entry.repositoryClassification === "customer-repository" &&
+      entry.owner === scopeSlug.owner &&
+      entry.repo === scopeSlug.repo &&
+      entry.purpose === input.scope.customerRepositoryPurpose &&
+      entry.approvalNote === input.scope.customerApprovalNote
+    ) {
+      const allowed = await resolveCanonicalRepositoryRoot(entry.repositoryRoot);
+
+      if (allowed.realPath === input.repositoryRealPath) {
+        return;
+      }
+    }
+  }
+
+  throw new Error(
+    "Customer repository allowlist match is required before customer lane preparation; mismatched fields may include owner, repo, repositoryRoot, purpose, or approvalNote.",
+  );
+}
+
 function collectDogfoodScopeIssues(scope: AuthoritativeLaneRunScope): string[] {
   const issues: string[] = [];
 
@@ -695,6 +819,36 @@ function collectDogfoodScopeIssues(scope: AuthoritativeLaneRunScope): string[] {
 
   if (!isNonEmptyString(scope.repositoryRoot)) {
     issues.push("repositoryRoot");
+  }
+
+  return issues;
+}
+
+function collectCustomerScopeIssues(scope: AuthoritativeLaneRunScope): string[] {
+  const issues: string[] = [];
+
+  if (scope.repositoryClassification !== "customer-repository") {
+    issues.push("repositoryClassification");
+  }
+
+  if (scope.ownerControlled === true) {
+    issues.push("ownerControlled");
+  }
+
+  if (!repositorySlugPattern.test(scope.repositorySlug)) {
+    issues.push("repositorySlug");
+  }
+
+  if (!isNonEmptyString(scope.repositoryRoot)) {
+    issues.push("repositoryRoot");
+  }
+
+  if (!isTrustedPolicyText(scope.customerRepositoryPurpose)) {
+    issues.push("customerRepositoryPurpose");
+  }
+
+  if (!isTrustedPolicyText(scope.customerApprovalNote)) {
+    issues.push("customerApprovalNote");
   }
 
   return issues;
@@ -733,6 +887,65 @@ function collectDogfoodAllowlistEntryIssues(
   });
 
   return issues;
+}
+
+function collectCustomerAllowlistEntryIssues(
+  allowlist: readonly CustomerRepositoryAllowlistEntry[],
+): string[] {
+  const issues: string[] = [];
+
+  allowlist.forEach((entry, index) => {
+    if (typeof entry !== "object" || entry === null) {
+      issues.push(`allowlist[${index}]`);
+      return;
+    }
+
+    if (entry.repositoryClassification !== "customer-repository") {
+      issues.push(`allowlist[${index}].repositoryClassification`);
+    }
+
+    if (!isRepositorySlugPart(entry.owner)) {
+      issues.push(`allowlist[${index}].owner`);
+    }
+
+    if (!isRepositorySlugPart(entry.repo)) {
+      issues.push(`allowlist[${index}].repo`);
+    }
+
+    if (!isNonEmptyString(entry.repositoryRoot)) {
+      issues.push(`allowlist[${index}].repositoryRoot`);
+    }
+
+    if (!isTrustedPolicyText(entry.purpose)) {
+      issues.push(`allowlist[${index}].purpose`);
+    }
+
+    if (!isTrustedPolicyText(entry.approvalNote)) {
+      issues.push(`allowlist[${index}].approvalNote`);
+    }
+  });
+
+  return issues;
+}
+
+function splitRepositorySlug(repositorySlug: string): { readonly owner: string; readonly repo: string } {
+  const [owner, repo] = repositorySlug.split("/");
+
+  return {
+    owner: owner ?? "",
+    repo: repo ?? "",
+  };
+}
+
+function isRepositorySlugPart(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Za-z0-9_.-]+$/.test(value);
+}
+
+function isTrustedPolicyText(value: unknown): value is string {
+  return (
+    isNonEmptyString(value) &&
+    !/\b(?:todo|tbd|sample|placeholder|example|fake)\b/i.test(value)
+  );
 }
 
 function isRepositoryUrl(value: unknown): value is string {

@@ -117,6 +117,34 @@ test("documents the Phase 3 local lane execution contract", async () => {
   );
 });
 
+test("documents the Track B customer repository allowlist boundary", async () => {
+  const contract = await readMarkdown("docs/architecture/local-lane-execution.md");
+  const providerCapabilities = await readMarkdown("docs/architecture/provider-capabilities.md");
+  const readme = await readMarkdown("README.md");
+  const combined = `${contract}\n${providerCapabilities}\n${readme}`;
+
+  for (const phrase of [
+    "customer repository allowlist",
+    "Track B",
+    "owner",
+    "repository name",
+    "<repository-root>",
+    "purpose",
+    "approval note",
+    "not owner-controlled dogfood",
+    "sanitized",
+    "not production-ready customer execution",
+    "compliance guarantee",
+  ]) {
+    assert.match(combined, new RegExp(phrase, "i"));
+  }
+
+  assert.doesNotMatch(
+    combined,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});
+
 test("documents dogfood rollback and cleanup boundaries", async () => {
   const runbook = await readMarkdown("docs/runbooks/dogfood-rollback-cleanup.md");
 

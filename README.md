@@ -12,6 +12,8 @@ The Phase 3 bounded local lane execution contract is defined in [docs/architectu
 
 The Phase 4 dogfood provider capability boundary is defined in [docs/architecture/provider-capabilities.md](docs/architecture/provider-capabilities.md).
 
+The X-Gate 3 Track B customer repository allowlist policy boundary is defined in [docs/architecture/local-lane-execution.md](docs/architecture/local-lane-execution.md). It is a local safety boundary for explicit owner, repo, path, purpose, and approval-note authorization. It is not production-ready customer execution, regulated workflow support, or a compliance guarantee.
+
 The X-Gate 3 local fake lane smoke command is documented in [docs/runbooks/x-gate3-local-lane-smoke.md](docs/runbooks/x-gate3-local-lane-smoke.md).
 
 The Ensen-loop mission and development charter alignment are summarized in [docs/mission.md](docs/mission.md).

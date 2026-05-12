@@ -67,6 +67,19 @@ repository slug, repository URL, and `<repository-root>` as one owner-controlled
 record. The GitHub WorkItem pickup allowlist remains read-only provenance for
 issue normalization; it does not authorize execution by itself.
 
+Customer repository lanes use a separate Track B allowlist boundary. They are
+not owner-controlled dogfood lanes and must carry an explicit customer
+repository classification plus an allowlist match on owner, repository name,
+`<repository-root>`, purpose, and approval note before prepare mode can mutate
+local lane workspace or state directories. Customer miss diagnostics must stay
+category-only and sanitized; public artifacts must not disclose customer
+repository names, domains, local paths, or purpose text.
+
+This Track B customer allowlist is a safety boundary for bounded local
+preparation. It does not make customer execution production-ready and does not
+claim regulated workflow support, ERPNext integration, electronic signature
+handling, batch release, final disposition, or compliance guarantees.
+
 ## Dogfood Adapter Positions
 
 The first dogfood slice can use a GitHub adapter for SCMProvider behavior and a

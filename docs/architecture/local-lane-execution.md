@@ -112,6 +112,25 @@ pickup allowlist is not execution authority by itself. Execution-capable dogfood
 lanes must still match the dogfood repository allowlist at the local lane
 boundary.
 
+Track B customer repository preparation uses a separate customer repository
+allowlist. Customer repositories are not owner-controlled dogfood repositories
+and must not reuse the dogfood allowlist, GitHub pickup allowlist, issue text, or
+path naming conventions as execution authority. Each matching customer entry
+must explicitly bind the repository owner, repository name, `<repository-root>`,
+purpose, and approval note. Missing, malformed, placeholder, or mismatched
+customer policy facts block before prepare mode creates lane workspaces, state
+directories, provider sessions, branches, pull requests, or agent execution.
+Customer diagnostics name only the failing category, such as `owner`, `repo`,
+`repositoryRoot`, `purpose`, or `approvalNote`; they must not echo customer
+repository names, domains, local paths, or purpose text into public artifacts.
+
+Customer lane skeleton output and LaneRunState journal entries use sanitized
+customer placeholders instead of raw customer repository details. The allowlist
+match proves only that the local Track B safety boundary was satisfied for this
+bounded preparation step. It is not production-ready customer execution,
+regulated workflow support, ERPNext integration, electronic signature handling,
+batch release, final disposition, or a compliance guarantee.
+
 Prepare mode is explicit. It creates only the Ensen-loop local lane workspace
 and state directories, writes a queued LaneRunState, and records branch intent,
 repository scope, idempotency, and cleanup facts in the Lane Journal. It still

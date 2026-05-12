@@ -272,6 +272,123 @@ test("allows adapter-agnostic https repository URLs for prepare allowlist matchi
   }
 });
 
+test("requires explicit customer repo allowlist policy without leaking customer details", async () => {
+  const roots = await createSkeletonRoots();
+  const customerRoot = path.join(path.dirname(roots.repositoryRoot), "customer-repo");
+  const customerScope = {
+    repositoryClassification: "customer-repository",
+    repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2CUST",
+    repositorySlug: "allowed-owner/allowed-repo",
+    repositoryUrl: "https://scm.invalid/allowed-owner/allowed-repo",
+    repositoryRoot: customerRoot,
+    customerRepositoryPurpose: "authorized bounded local preparation",
+    customerApprovalNote: "approval note recorded for bounded local preparation",
+  } as const;
+
+  try {
+    await mkdir(customerRoot);
+
+    const skeleton = await planBranchLaneRunSkeleton({
+      mode: "prepare",
+      workItem: readyWorkItem,
+      laneRunId: "run_customer_allowlisted",
+      idempotencyKey: "issue-97-customer-allowlisted",
+      repositoryRoot: customerRoot,
+      worktreeRoot: roots.worktreeRoot,
+      stateRoot: roots.stateRoot,
+      branchName: "codex/issue-97-customer",
+      authoritativeScope: customerScope,
+      customerRepositoryAllowlist: [
+        {
+          repositoryClassification: "customer-repository",
+          owner: "allowed-owner",
+          repo: "allowed-repo",
+          repositoryRoot: customerRoot,
+          purpose: "authorized bounded local preparation",
+          approvalNote: "approval note recorded for bounded local preparation",
+        },
+      ],
+    });
+
+    assert.equal(skeleton.repository.classification, "customer-repository");
+    assert.equal(skeleton.repository.slug, "<customer-repository>");
+    assert.equal(skeleton.repository.url, undefined);
+
+    const serializedSkeleton = JSON.stringify(skeleton);
+    assert.doesNotMatch(serializedSkeleton, /allowed-owner/);
+    assert.doesNotMatch(serializedSkeleton, /allowed-repo/);
+    assert.doesNotMatch(serializedSkeleton, /scm\.invalid/);
+    assert.doesNotMatch(serializedSkeleton, /authorized bounded local preparation/);
+    assert.doesNotMatch(serializedSkeleton, new RegExp(escapeRegExp(customerRoot)));
+
+    const state = await readLaneRunState(roots.stateRoot, skeleton.laneRunId);
+    const serializedState = JSON.stringify(state);
+    assert.match(serializedState, /customer repo allowlist matched/);
+    assert.doesNotMatch(serializedState, /allowed-owner/);
+    assert.doesNotMatch(serializedState, /allowed-repo/);
+    assert.doesNotMatch(serializedState, /scm\.invalid/);
+    assert.doesNotMatch(serializedState, /authorized bounded local preparation/);
+    assert.doesNotMatch(serializedState, new RegExp(escapeRegExp(customerRoot)));
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_customer_missing_allowlist",
+          idempotencyKey: "issue-97-customer-missing-list",
+          repositoryRoot: customerRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-97-customer-missing",
+          authoritativeScope: customerScope,
+        }),
+      /Customer repository allowlist is required/,
+    );
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_customer_wrong_purpose",
+          idempotencyKey: "issue-97-customer-wrong-purpose",
+          repositoryRoot: customerRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-97-customer-wrong-purpose",
+          authoritativeScope: customerScope,
+          customerRepositoryAllowlist: [
+            {
+              repositoryClassification: "customer-repository",
+              owner: "allowed-owner",
+              repo: "allowed-repo",
+              repositoryRoot: customerRoot,
+              purpose: "different bounded local preparation",
+              approvalNote: "approval note recorded for bounded local preparation",
+            },
+          ],
+        }),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(error.message, /owner, repo, repositoryRoot, purpose, or approvalNote/);
+        assert.doesNotMatch(error.message, /allowed-owner/);
+        assert.doesNotMatch(error.message, /allowed-repo/);
+        assert.doesNotMatch(error.message, /different bounded local preparation/);
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(customerRoot)));
+        return true;
+      },
+    );
+
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_missing_allowlist")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_missing_allowlist")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
+  } finally {
+    await roots.cleanup();
+  }
+});
+
 test("fails closed before mutation for unsafe branch, missing scope, symlink root, and disallowed repository", async () => {
   const roots = await createSkeletonRoots();
   const outsideRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-outside-repo-"));
