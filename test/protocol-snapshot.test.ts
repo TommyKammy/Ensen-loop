@@ -13,6 +13,11 @@ const operationalEvidenceSnapshotRoot = path.join(
   "ensen-protocol",
   "v0.3.0",
 );
+const trackBEvidenceSnapshotRoot = path.join(
+  "protocol-snapshots",
+  "ensen-protocol",
+  "v0.4.0",
+);
 
 const expectedSchemas = [
   "schemas/eip.evidence-bundle-ref.v1.schema.json",
@@ -41,6 +46,12 @@ async function readJson(relativePath: string): Promise<unknown> {
 async function readOperationalEvidenceSnapshotJson(relativePath: string): Promise<unknown> {
   return JSON.parse(
     await readFile(path.join(operationalEvidenceSnapshotRoot, relativePath), "utf8"),
+  ) as unknown;
+}
+
+async function readTrackBEvidenceSnapshotJson(relativePath: string): Promise<unknown> {
+  return JSON.parse(
+    await readFile(path.join(trackBEvidenceSnapshotRoot, relativePath), "utf8"),
   ) as unknown;
 }
 
@@ -296,4 +307,87 @@ test("vendors the Ensen-protocol v0.3.0 Track A operational evidence profile fix
     operationalEvidenceSecretLikeKeyPattern,
     "operational evidence fixture must not contain secret-like key names",
   );
+});
+
+test("vendors the Ensen-protocol v0.4.0 Track B customer and regulated evidence boundary", async () => {
+  const manifest = await readTrackBEvidenceSnapshotJson("manifest.json");
+
+  assert.deepEqual(manifest, {
+    source: {
+      repository: "TommyKammy/Ensen-protocol",
+      releaseTag: "v0.4.0",
+      protocolVersion: "0.4.0",
+      sourceRelease: "https://github.com/TommyKammy/Ensen-protocol/releases/tag/v0.4.0",
+      sourceReleaseCommit: "f6c3c5bee2574c8660f6954fe58a9e7625daad12",
+      sourceTagObject: "3e3eddbd0ca654644f7e2676361ff60a80bb972a",
+      sourceImplementationCommits: ["6fb03f7", "4e16a28", "7caf6a2"],
+    },
+    policy: {
+      updatePolicy:
+        "Copied Track B guidance. Update only by replacing this directory from a tagged Ensen-protocol release.",
+      runtimeDependency: false,
+      integrationKind: "local conformance evidence",
+      boundary: "customer / regulated evidence planning",
+      productionRegulatedWorkflowSupport: false,
+    },
+    includes: {
+      guidance: [
+        "docs/integration/customer-regulated-data-classification-profile.md",
+        "docs/integration/approval-and-draft-evidence-semantics.md",
+      ],
+      fixtureLikeExamples: [
+        "fixtures/customer-regulated-data-classification/v1/valid/public-safe-profile.json",
+        "fixtures/approval-evidence-semantics/v1/valid/public-safe-draft-action.json",
+      ],
+      schemaEvidence: ["schemas/eip.common.v1.schema.json"],
+    },
+  });
+
+  const schema = await readTrackBEvidenceSnapshotJson("schemas/eip.common.v1.schema.json");
+  assertJsonObject(schema, "Track B common schema snapshot must be a JSON object");
+  const defs = schema.$defs;
+  assertJsonObject(defs, "Track B common schema snapshot must define $defs");
+  const dataClassification = defs.DataClassification;
+  assertJsonObject(
+    dataClassification,
+    "Track B common schema snapshot must define DataClassification",
+  );
+  assert.deepEqual(dataClassification.enum, [
+    "public",
+    "internal",
+    "confidential",
+    "customer-confidential",
+    "regulated",
+    "restricted",
+  ]);
+
+  const profile = await readTrackBEvidenceSnapshotJson(
+    "fixtures/customer-regulated-data-classification/v1/valid/public-safe-profile.json",
+  );
+  assertJsonObject(profile, "Track B classification profile fixture must be a JSON object");
+  assert.equal(profile.profile, "track-b-classification.v1");
+  assert.equal(profile.track, "X-Gate 3 Track B");
+  assert.equal(profile.boundary, "customer / regulated evidence planning");
+  assert.deepEqual(profile.classificationTerms, [
+    "public",
+    "internal",
+    "confidential",
+    "customer-confidential",
+    "regulated",
+  ]);
+
+  const publicFixtureSafety = profile.publicFixtureSafety;
+  assertJsonObject(
+    publicFixtureSafety,
+    "Track B classification fixture publicFixtureSafety must be a JSON object",
+  );
+  assert.equal(publicFixtureSafety.containsCustomerData, false);
+  assert.equal(publicFixtureSafety.containsRegulatedData, false);
+  assert.equal(publicFixtureSafety.containsSecrets, false);
+  assert.equal(publicFixtureSafety.containsPrivateRepositoryDetails, false);
+  assert.equal(publicFixtureSafety.containsWorkstationLocalAbsolutePath, false);
+
+  const serializedProfile = JSON.stringify(profile);
+  assert.doesNotMatch(serializedProfile, /\/Users\/|\/home\/|C:\\Users\\/);
+  assert.doesNotMatch(serializedProfile, /:\/\/[^/?#\s]+:[^/?#\s]+@/);
 });
