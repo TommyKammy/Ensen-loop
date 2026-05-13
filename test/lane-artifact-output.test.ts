@@ -222,6 +222,22 @@ test("requires explicit Track B customer lane evidence classification before pub
       }),
     ),
   );
+  assert.doesNotThrow(() =>
+    createLaneArtifactOutput(
+      createSafePatchInput({
+        evidenceRefs: [
+          {
+            ...safeEvidenceRef,
+            metadata: {
+              ...safeEvidenceRef.metadata,
+              dataClassification: "regulated",
+              embedsEvidencePayload: false,
+            },
+          },
+        ],
+      }),
+    ),
+  );
 
   const missingClassificationMetadata = { ...customerLaneEvidenceRef.metadata };
   delete missingClassificationMetadata.dataClassification;
@@ -266,6 +282,47 @@ test("keeps Track B confidential evidence references metadata-only in public art
               metadata: {
                 ...customerLaneEvidenceRef.metadata,
                 rawCustomerRecord: "synthetic customer order payload",
+              },
+            },
+          ],
+        }),
+      ),
+    /Track B customer lane evidence references must not embed raw controlled material/i,
+  );
+
+  assert.throws(
+    () =>
+      createLaneArtifactOutput(
+        createSafePatchInput({
+          evidenceRefs: [
+            {
+              ...safeEvidenceRef,
+              metadata: {
+                ...safeEvidenceRef.metadata,
+                dataClassification: "customer-confidential",
+                embedsEvidencePayload: false,
+                rawCustomerRecord: "synthetic customer record",
+              },
+            },
+          ],
+        }),
+      ),
+    /Track B customer lane evidence references must not embed raw controlled material/i,
+  );
+
+  assert.throws(
+    () =>
+      createLaneArtifactOutput(
+        createSafePatchInput({
+          evidenceRefs: [
+            {
+              ...safeEvidenceRef,
+              metadata: {
+                ...safeEvidenceRef.metadata,
+                dataClassification: "public",
+                controlledReference: true,
+                embedsEvidencePayload: false,
+                rawCustomerRecord: "synthetic customer record",
               },
             },
           ],

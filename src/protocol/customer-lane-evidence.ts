@@ -75,6 +75,7 @@ export function isCustomerLaneEvidenceRef(evidenceRef: EvidenceBundleRef): boole
   return (
     metadata?.evidenceTrack === "track-b" ||
     customerLaneBoundaryValues.has(metadata?.evidenceBoundary) ||
+    controlledClassifications.has(metadata?.dataClassification) ||
     metadata?.controlledReference === true
   );
 }
@@ -105,7 +106,10 @@ function collectCustomerLaneEvidenceRefIssues(
     });
   }
 
-  if (controlledClassifications.has(metadata.dataClassification)) {
+  if (
+    controlledClassifications.has(metadata.dataClassification) ||
+    metadata.controlledReference === true
+  ) {
     collectControlledReferenceMetadataIssues(issues, metadata);
   }
 

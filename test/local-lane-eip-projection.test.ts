@@ -209,6 +209,51 @@ test("requires explicit Track B customer lane evidence classification before Run
           }),
         /Track B customer lane evidence requires an explicit allowed data classification/i,
       );
+
+      assert.throws(
+        () =>
+          projectLaneRunResult({
+            state: persisted.state,
+            requestId: request.id,
+            correlationId: request.correlationId,
+            completedAt: "2026-05-01T00:00:03Z",
+            evidenceBundleRefs: [
+              {
+                ...persisted.evidenceBundleRefs[0],
+                metadata: {
+                  ...persisted.evidenceBundleRefs[0].metadata,
+                  dataClassification: "regulated",
+                  embedsEvidencePayload: false,
+                  rawCustomerRecord: "synthetic customer record",
+                },
+              },
+            ],
+          }),
+        /Track B customer lane evidence references must not embed raw controlled material/i,
+      );
+
+      assert.throws(
+        () =>
+          projectLaneRunResult({
+            state: persisted.state,
+            requestId: request.id,
+            correlationId: request.correlationId,
+            completedAt: "2026-05-01T00:00:03Z",
+            evidenceBundleRefs: [
+              {
+                ...persisted.evidenceBundleRefs[0],
+                metadata: {
+                  ...persisted.evidenceBundleRefs[0].metadata,
+                  dataClassification: "internal",
+                  controlledReference: true,
+                  embedsEvidencePayload: false,
+                  rawCustomerRecord: "synthetic customer record",
+                },
+              },
+            ],
+          }),
+        /Track B customer lane evidence references must not embed raw controlled material/i,
+      );
     },
   );
 });
