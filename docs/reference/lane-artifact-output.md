@@ -3,7 +3,7 @@
 Phase 4 lane artifact output is a review surface for completed local lane runs.
 It can describe a patch artifact reference or a PR draft intent, but it does not
 create pull requests, merge branches, declare production readiness, or replace
-human review.
+human review. It never records an automatic final quality decision.
 
 ## Artifact Boundary
 
@@ -19,6 +19,10 @@ dry-run-first precondition summary: dry-run proof required, proof provided,
 human operator approval provided, merge unsupported, and merge authority
 human-only. This metadata explains the approval boundary for reviewers; it does
 not grant merge authority.
+
+Artifact output records merge authority and final quality decision authority as
+human-only control points. `mergeReady`, `autoMerge`, and
+`automaticQualityDecision` must remain false.
 
 Artifact paths are public review metadata. They must stay repo-relative under
 `artifacts/`, avoid traversal, and avoid raw secrets or workstation-local
@@ -76,5 +80,10 @@ review boundary and keeps these fields false:
 - pull request creation
 - merge readiness
 - automatic merge authority
+- automatic final quality decision
 
-The merge decision remains human-only.
+The merge decision and final quality decision remain human-only. Track B
+customer lane evidence can be exported only as patch artifact metadata; it cannot
+activate PR draft intent, automatic merge, or automatic quality-decision paths.
+This does not permit production use, live ERPNext write-back, regulated workflow
+execution, or compliance guarantees.

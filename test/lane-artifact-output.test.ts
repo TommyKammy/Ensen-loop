@@ -271,6 +271,44 @@ test("requires explicit Track B customer lane evidence classification before pub
   }
 });
 
+test("keeps customer lane artifact output at human merge and quality control points", () => {
+  const artifact = createLaneArtifactOutput(
+    createSafePatchInput({
+      evidenceRefs: [customerLaneEvidenceRef],
+    }),
+  );
+
+  assert.equal(artifact.humanReview.mergeAuthority, "human-only");
+  assert.equal(
+    (artifact.humanReview as Record<string, unknown>).qualityDecisionAuthority,
+    "human-only",
+  );
+  assert.equal((artifact as unknown as Record<string, unknown>).automaticQualityDecision, false);
+  assert.equal(artifact.changeRequestIntent.status, "not-requested");
+  assert.equal(artifact.mergeReady, false);
+  assert.equal(artifact.autoMerge, false);
+
+  assert.throws(
+    () =>
+      createLaneArtifactOutput(
+        createSafePatchInput({
+          kind: "pr-draft-intent",
+          artifactRef: {
+            uri: "artifacts/pr-drafts/issue-100.json",
+            mediaType: "application/json",
+          },
+          ownerControlledRepository: {
+            provider: "github",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            changeRequestIntentSupported: true,
+          },
+          evidenceRefs: [customerLaneEvidenceRef],
+        }),
+      ),
+    /Customer lane artifact output does not support PR draft intent/i,
+  );
+});
+
 test("keeps Track B confidential evidence references metadata-only in public artifact export", () => {
   const missingPayloadFlagMetadata = { ...safeEvidenceRef.metadata };
   delete missingPayloadFlagMetadata.embedsEvidencePayload;

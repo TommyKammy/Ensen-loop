@@ -7,6 +7,7 @@ import type { WorkItem } from "../core/index.js";
 import type { LaneRunState } from "../lane/index.js";
 import {
   type EvidenceBundleRef,
+  isCustomerLaneEvidenceRef,
   validateCustomerLaneEvidenceRef,
   validateEvidenceBundleRef,
 } from "../protocol/index.js";
@@ -95,9 +96,11 @@ export interface LaneArtifactOutput {
   readonly humanReview: {
     readonly required: true;
     readonly mergeAuthority: "human-only";
+    readonly qualityDecisionAuthority: "human-only";
   };
   readonly mergeReady: false;
   readonly autoMerge: false;
+  readonly automaticQualityDecision: false;
 }
 
 export interface LaneArtifactOutputValidationIssue {
@@ -176,9 +179,11 @@ export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): 
     humanReview: {
       required: true,
       mergeAuthority: "human-only",
+      qualityDecisionAuthority: "human-only",
     },
     mergeReady: false,
     autoMerge: false,
+    automaticQualityDecision: false,
   };
   const validation = validateLaneArtifactOutput(artifact);
 
@@ -265,6 +270,13 @@ function collectCreateLaneArtifactOutputIssues(
     collectPrDraftScopeIssues(issues, input.ownerControlledRepository);
   }
 
+  if (input.kind === "pr-draft-intent" && input.evidenceRefs?.some(isCustomerLaneEvidenceRef) === true) {
+    issues.push({
+      path: "kind",
+      message: "Customer lane artifact output does not support PR draft intent.",
+    });
+  }
+
   collectEvidenceRefIssues(issues, input.laneRunState, input.evidenceRefs ?? []);
 
   return issues;
@@ -308,10 +320,16 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
     });
   }
 
-  if (value.createsPullRequest !== false || value.mergeReady !== false || value.autoMerge !== false) {
+  if (
+    value.createsPullRequest !== false ||
+    value.mergeReady !== false ||
+    value.autoMerge !== false ||
+    value.automaticQualityDecision !== false
+  ) {
     issues.push({
       path: "humanReview",
-      message: "Lane artifact output must not imply pull request creation, merge readiness, or auto merge.",
+      message:
+        "Lane artifact output must not imply pull request creation, merge readiness, auto merge, or automatic quality decision.",
     });
   }
 
@@ -320,11 +338,12 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
   if (
     !isRecord(value.humanReview) ||
     value.humanReview.required !== true ||
-    value.humanReview.mergeAuthority !== "human-only"
+    value.humanReview.mergeAuthority !== "human-only" ||
+    value.humanReview.qualityDecisionAuthority !== "human-only"
   ) {
     issues.push({
       path: "humanReview",
-      message: "Lane artifact output must preserve the human review boundary.",
+      message: "Lane artifact output must preserve the human merge and quality review boundary.",
     });
   }
 
