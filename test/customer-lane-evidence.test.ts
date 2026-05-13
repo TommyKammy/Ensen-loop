@@ -132,6 +132,33 @@ test("rejects free-form values in controlled metadata fields", () => {
   }
 });
 
+test("rejects synthetic customer identifiers, customer domains, and regulated records in controlled metadata", () => {
+  for (const [key, value] of [
+    ["checksumUnavailableReason", "customer_id=cust_synthetic_123456"],
+    ["checksumUnavailableReason", "tenant alpha-customer.customer.example"],
+    ["checksumUnavailableReason", "synthetic regulated fixture MRN-12345678 DOB 1970-01-01"],
+  ] as const) {
+    const result = validateCustomerLaneEvidenceRef({
+      ...safeEvidenceRef,
+      metadata: {
+        ...safeEvidenceRef.metadata,
+        dataClassification: "regulated",
+        embedsEvidencePayload: false,
+        [key]: value,
+      },
+    });
+
+    assert.equal(result.ok, false, `${value} must reject controlled metadata`);
+
+    if (!result.ok) {
+      assert.ok(
+        result.issues.some((issue) => issue.path === `metadata.${key}`),
+        `${value} rejection must point at the controlled metadata field`,
+      );
+    }
+  }
+});
+
 test("accepts bounded values in controlled metadata fields", () => {
   const result = validateCustomerLaneEvidenceRef({
     ...safeEvidenceRef,

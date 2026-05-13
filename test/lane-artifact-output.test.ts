@@ -378,7 +378,7 @@ test("rejects generic local absolute paths in public artifact metadata without e
         ),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        assert.match(error.message, /raw secrets or workstation-local absolute paths/i);
+        assert.match(error.message, /raw secrets, customer identifiers, regulated content, or workstation-local absolute paths/i);
         assert.doesNotMatch(error.message, new RegExp(escapeRegExp(unsafePublicPath)));
         return true;
       },
@@ -409,12 +409,60 @@ test("rejects secret-like public artifact values without echoing raw values", ()
         ),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        assert.match(error.message, /raw secrets or workstation-local absolute paths/i);
+        assert.match(error.message, /raw secrets, customer identifiers, regulated content, or workstation-local absolute paths/i);
         assert.doesNotMatch(error.message, new RegExp(escapeRegExp(unsafePublicValue)));
         return true;
       },
     );
   }
+});
+
+test("rejects customer and regulated-looking public artifact values without echoing raw values", () => {
+  const unsafePublicValues = [
+    "customer_id=cust_synthetic_123456",
+    "customer path customers/synthetic-pharma/orders/export.json",
+    "tenant at alpha-customer.customer.example",
+    "synthetic regulated fixture MRN-12345678 DOB 1970-01-01",
+  ];
+
+  for (const unsafePublicValue of unsafePublicValues) {
+    assert.throws(
+      () =>
+        createLaneArtifactOutput(
+          createSafePatchInput({
+            workItem: {
+              id: "workitem_issue60Patch01",
+              title: `LOOP-035: ${unsafePublicValue}`,
+              source: "github-issue-60",
+              status: "completed",
+            },
+          }),
+        ),
+      (error: unknown) => {
+        assert.ok(error instanceof Error);
+        assert.match(
+          error.message,
+          /raw secrets, customer identifiers, regulated content, or workstation-local absolute paths/i,
+        );
+        assert.doesNotMatch(error.message, new RegExp(escapeRegExp(unsafePublicValue)));
+        return true;
+      },
+    );
+  }
+});
+
+test("allows public record artifact paths without customer-specific prefixes", () => {
+  const artifact = createLaneArtifactOutput(
+    createSafePatchInput({
+      artifactRef: {
+        uri: "artifacts/records/report.json",
+        mediaType: "application/json",
+      },
+    }),
+  );
+
+  assert.equal(artifact.artifact.uri, "artifacts/records/report.json");
+  assert.equal(validateLaneArtifactOutput(artifact).ok, true);
 });
 
 test("emits guarded PR draft intent without implying automatic merge authority", () => {
@@ -681,7 +729,7 @@ test("validates nested public artifact fields and fails closed on unsafe seriali
   assert.equal(circularValidation.ok, false);
   assert.match(
     circularValidation.ok ? "" : circularValidation.issues.map((issue) => issue.message).join("\n"),
-    /raw secrets or workstation-local absolute paths/i,
+    /raw secrets, customer identifiers, regulated content, or workstation-local absolute paths/i,
   );
 });
 
