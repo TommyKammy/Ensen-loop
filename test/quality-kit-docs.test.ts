@@ -206,8 +206,11 @@ test("documents customer lane rollback and revocation boundaries", async () => {
   }
 
   assert.match(readme, /docs\/runbooks\/customer-lane-rollback-revocation\.md/);
-  assert.match(runbook, /CODEX_SUPERVISOR_CONFIG/);
-  assert.match(runbook, /<supervisor-config-path>/);
+  assert.match(runbook, /dist\/src\/cli\/index\.js/);
+  assert.match(runbook, /git -C <customer-lane-worktree-path> status --short --branch/);
+  assert.match(runbook, /git branch -D <customer-lane-branch>/);
+  assert.doesNotMatch(runbook, /node dist\/index\.js/);
+  assert.doesNotMatch(runbook, /status --why|node dist\/src\/cli\/index\.js loop/);
   assert.doesNotMatch(
     runbook,
     /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,

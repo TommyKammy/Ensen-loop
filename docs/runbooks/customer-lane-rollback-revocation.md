@@ -17,19 +17,23 @@ boundary.
 Before deleting or revoking anything, capture the authoritative lane identity:
 
 ```sh
-CODEX_SUPERVISOR_CONFIG=<supervisor-config-path> node dist/index.js status --why
-git status --short --branch
-git worktree list
+npm run build
+node dist/src/cli/index.js run-request <run-request-json-file>
+git worktree list --porcelain
+git -C <customer-lane-worktree-path> status --short --branch
 ```
 
-Use the authoritative supervisor lane record, issue id, branch, worktree path,
-draft PR reference, local artifact references, and evidence references. Do not
-infer customer, repository, account, lane, or evidence linkage from names,
-directory shape, comments, issue text, or nearby summaries.
+Use the authoritative LaneRunState, lane journal, issue id, branch, worktree
+path, draft PR reference, local artifact references, and evidence references.
+Do not infer customer, repository, account, lane, or evidence linkage from
+names, directory shape, comments, issue text, or nearby summaries.
 
-If the status command cannot identify the active customer lane or the lane record
-is malformed, stop cleanup and request operator confirmation. Missing scope,
-provenance, approval, or classification signals fail closed.
+Ensen-loop currently exposes the documented `dry-run`, `run-request`,
+`x-gate2-smoke`, and `x-gate3-smoke` CLI commands through
+`dist/src/cli/index.js`. It does not expose a `status`, `loop`, or cleanup
+command. If the retained lane state, journal, or worktree path cannot identify
+the target customer lane, stop cleanup and request operator confirmation.
+Missing scope, provenance, approval, or classification signals fail closed.
 
 ## Operator Decision Points
 
@@ -92,10 +96,11 @@ Use retry when the lane remains valid and the failure is repairable.
    evidence references.
 2. Record the failed or blocked signature before restarting.
 3. Repair the explicit prerequisite only.
-4. Restart from the repo-local supervisor entrypoint:
+4. Re-run only a documented Ensen-loop CLI boundary for the retained request.
+   For the current bounded local lane smoke path:
 
 ```sh
-CODEX_SUPERVISOR_CONFIG=<supervisor-config-path> node dist/index.js loop
+node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>
 ```
 
 Retry does not revoke the earlier evidence by itself. If a newer attempt
@@ -166,9 +171,9 @@ make the previous evidence disappear.
 Inspect before cleanup:
 
 ```sh
-CODEX_SUPERVISOR_CONFIG=<supervisor-config-path> node dist/index.js status --why
-git status --short --branch
-git worktree list
+node dist/src/cli/index.js run-request <run-request-json-file>
+git worktree list --porcelain
+git -C <customer-lane-worktree-path> status --short --branch
 git branch --list <customer-lane-branch>
 ```
 
@@ -176,8 +181,18 @@ Remove only confirmed local artifacts:
 
 ```sh
 git worktree remove <customer-lane-worktree-path>
+git branch --merged HEAD --list <customer-lane-branch>
 git branch -d <customer-lane-branch>
 rm <local-artifact-path>
+```
+
+Use `git branch -d <customer-lane-branch>` only when the branch is fully merged
+into the retained successor or current `HEAD`. For an intentionally abandoned,
+revoked, or superseded branch that remains unmerged, first record the retained
+commit or patch reference and the explicit operator confirmation, then use:
+
+```sh
+git branch -D <customer-lane-branch>
 ```
 
 Record the final decision:
