@@ -24,6 +24,8 @@ GitHub issue pickup is documented in [docs/reference/github-work-item-pickup.md]
 
 Phase 4 patch and PR draft artifact output is documented in [docs/reference/lane-artifact-output.md](docs/reference/lane-artifact-output.md). It emits reviewable metadata for completed lane runs without embedding evidence payloads, opening pull requests, claiming merge readiness, or bypassing human review.
 
+Customer lane rollback and revocation handling is documented in [docs/runbooks/customer-lane-rollback-revocation.md](docs/runbooks/customer-lane-rollback-revocation.md). It keeps retained evidence separate from deleted local artifacts and records revoked or superseded evidence without implying production readiness or compliance guarantees.
+
 The copied Ensen-protocol v0.2.0 schema and conformance fixture snapshot is documented in [protocol-snapshots/ensen-protocol/v0.2.0/README.md](protocol-snapshots/ensen-protocol/v0.2.0/README.md). It is repo-owned fixture data, not a mutable shared runtime dependency. Protocol release `v0.2.0` still carries `eip.*.v1` artifact schemas; do not rename those artifacts to `v2` unless a future protocol release defines new schema majors.
 
 The copied Ensen-protocol v0.3.0 operational evidence profile snapshot is documented in [protocol-snapshots/ensen-protocol/v0.3.0/README.md](protocol-snapshots/ensen-protocol/v0.3.0/README.md). It is local conformance evidence for X-Gate 3 Track A artifact hygiene, not an Ensen-protocol runtime dependency.

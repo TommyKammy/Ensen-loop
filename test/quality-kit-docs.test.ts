@@ -179,6 +179,44 @@ test("documents dogfood rollback and cleanup boundaries", async () => {
   );
 });
 
+test("documents customer lane rollback and revocation boundaries", async () => {
+  const runbook = await readMarkdown("docs/runbooks/customer-lane-rollback-revocation.md");
+  const readme = await readMarkdown("README.md");
+
+  for (const phrase of [
+    "customer lane rollback and revocation",
+    "retry",
+    "abandon",
+    "manual repair",
+    "revoke",
+    "supersede",
+    "worktree cleanup",
+    "branch cleanup",
+    "draft PR cleanup",
+    "local artifact handling",
+    "retained evidence",
+    "deleted local artifacts",
+    "revoked",
+    "superseded",
+    "operator-controlled",
+    "production readiness",
+    "compliance guarantee",
+  ]) {
+    assert.match(runbook, new RegExp(phrase, "i"));
+  }
+
+  assert.match(readme, /docs\/runbooks\/customer-lane-rollback-revocation\.md/);
+  assert.match(runbook, /dist\/src\/cli\/index\.js/);
+  assert.match(runbook, /git -C <customer-lane-worktree-path> status --short --branch/);
+  assert.match(runbook, /git branch -D <customer-lane-branch>/);
+  assert.doesNotMatch(runbook, /node dist\/index\.js/);
+  assert.doesNotMatch(runbook, /status --why|node dist\/src\/cli\/index\.js loop/);
+  assert.doesNotMatch(
+    runbook,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});
+
 test("documents Loop X-Gate 3 Track A closure evidence", async () => {
   const readme = await readMarkdown("README.md");
 
