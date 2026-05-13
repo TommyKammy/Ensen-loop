@@ -272,6 +272,27 @@ test("requires explicit Track B customer lane evidence classification before pub
 });
 
 test("keeps Track B confidential evidence references metadata-only in public artifact export", () => {
+  const missingPayloadFlagMetadata = { ...safeEvidenceRef.metadata };
+  delete missingPayloadFlagMetadata.embedsEvidencePayload;
+
+  assert.throws(
+    () =>
+      createLaneArtifactOutput(
+        createSafePatchInput({
+          evidenceRefs: [
+            {
+              ...safeEvidenceRef,
+              metadata: {
+                ...missingPayloadFlagMetadata,
+                dataClassification: "regulated",
+              },
+            },
+          ],
+        }),
+      ),
+    /Track B customer lane evidence references must not embed raw controlled material/i,
+  );
+
   assert.throws(
     () =>
       createLaneArtifactOutput(
