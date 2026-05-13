@@ -72,11 +72,15 @@ export function validateCustomerLaneEvidenceRef(
 export function isCustomerLaneEvidenceRef(evidenceRef: EvidenceBundleRef): boolean {
   const metadata = evidenceRef.metadata;
 
+  if (metadata === undefined) {
+    return false;
+  }
+
   return (
-    metadata?.evidenceTrack === "track-b" ||
-    customerLaneBoundaryValues.has(metadata?.evidenceBoundary) ||
-    controlledClassifications.has(metadata?.dataClassification) ||
-    metadata?.controlledReference === true
+    metadata.evidenceTrack === "track-b" ||
+    customerLaneBoundaryValues.has(metadata.evidenceBoundary) ||
+    isControlledDataClassification(metadata.dataClassification) ||
+    metadata.controlledReference === true
   );
 }
 
@@ -107,13 +111,17 @@ function collectCustomerLaneEvidenceRefIssues(
   }
 
   if (
-    controlledClassifications.has(metadata.dataClassification) ||
+    isControlledDataClassification(metadata.dataClassification) ||
     metadata.controlledReference === true
   ) {
     collectControlledReferenceMetadataIssues(issues, metadata);
   }
 
   return issues;
+}
+
+function isControlledDataClassification(value: EvidenceBundleMetadataValue | undefined): boolean {
+  return controlledClassifications.has(value);
 }
 
 function collectControlledReferenceMetadataIssues(
