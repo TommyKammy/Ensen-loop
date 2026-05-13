@@ -139,6 +139,80 @@ test("projects persisted completed lane state to EIP status and succeeded result
   );
 });
 
+test("requires explicit Track B customer lane evidence classification before RunResult projection", async () => {
+  await withPersistedLaneRun(
+    {
+      name: "issue-42-succeeded",
+      outcome: "succeeded",
+    },
+    async ({ request, persisted }) => {
+      const trackBRef = {
+        ...persisted.evidenceBundleRefs[0],
+        metadata: {
+          ...persisted.evidenceBundleRefs[0].metadata,
+          evidenceTrack: "track-b",
+          evidenceBoundary: "customer-lane",
+          dataClassification: "regulated",
+          referenceKind: "controlledEvidenceReference",
+          embedsEvidencePayload: false,
+        },
+      };
+
+      assert.doesNotThrow(() =>
+        projectLaneRunResult({
+          state: persisted.state,
+          requestId: request.id,
+          correlationId: request.correlationId,
+          completedAt: "2026-05-01T00:00:03Z",
+          evidenceBundleRefs: [trackBRef],
+        }),
+      );
+
+      const missingClassificationMetadata: Record<string, string | number | boolean | null> = {
+        ...trackBRef.metadata,
+      };
+      delete missingClassificationMetadata.dataClassification;
+
+      assert.throws(
+        () =>
+          projectLaneRunResult({
+            state: persisted.state,
+            requestId: request.id,
+            correlationId: request.correlationId,
+            completedAt: "2026-05-01T00:00:03Z",
+            evidenceBundleRefs: [
+              {
+                ...trackBRef,
+                metadata: missingClassificationMetadata,
+              },
+            ],
+          }),
+        /Track B customer lane evidence requires an explicit allowed data classification/i,
+      );
+
+      assert.throws(
+        () =>
+          projectLaneRunResult({
+            state: persisted.state,
+            requestId: request.id,
+            correlationId: request.correlationId,
+            completedAt: "2026-05-01T00:00:03Z",
+            evidenceBundleRefs: [
+              {
+                ...trackBRef,
+                metadata: {
+                  ...trackBRef.metadata,
+                  dataClassification: "unknown",
+                },
+              },
+            ],
+          }),
+        /Track B customer lane evidence requires an explicit allowed data classification/i,
+      );
+    },
+  );
+});
+
 test("projects failed and blocked terminal lane state without inventing success evidence", async () => {
   await withPersistedLaneRun(
     {

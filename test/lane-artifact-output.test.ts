@@ -66,6 +66,20 @@ const safeEvidenceRef: EvidenceBundleRef = {
   },
 };
 
+const customerLaneEvidenceRef: EvidenceBundleRef = {
+  ...safeEvidenceRef,
+  id: "evb_issue98TrackBEvidence01",
+  correlationId: "corr_issue98TrackBEvidence01",
+  metadata: {
+    producer: "ensen-loop",
+    evidenceTrack: "track-b",
+    evidenceBoundary: "customer-lane",
+    dataClassification: "customer-confidential",
+    referenceKind: "controlledEvidenceReference",
+    embedsEvidencePayload: false,
+  },
+};
+
 const agentOutcome = createCodexAgentInvocationIntent({
   mode: "execute",
   capabilityEvidence: CODEX_AGENT_PROVIDER_CAPABILITY_EVIDENCE,
@@ -198,6 +212,67 @@ test("emits patch artifact metadata tied to completed lane state without raw evi
     },
   ]);
   assert.doesNotMatch(JSON.stringify(artifact), /rawEvidence|customer data|token=/i);
+});
+
+test("requires explicit Track B customer lane evidence classification before public artifact export", () => {
+  assert.doesNotThrow(() =>
+    createLaneArtifactOutput(
+      createSafePatchInput({
+        evidenceRefs: [customerLaneEvidenceRef],
+      }),
+    ),
+  );
+
+  const missingClassificationMetadata = { ...customerLaneEvidenceRef.metadata };
+  delete missingClassificationMetadata.dataClassification;
+  const invalidMetadataCases = [
+    missingClassificationMetadata,
+    {
+      ...customerLaneEvidenceRef.metadata,
+      dataClassification: "unknown",
+    },
+    {
+      ...customerLaneEvidenceRef.metadata,
+      dataClassification: "confidential",
+    },
+  ];
+
+  for (const metadata of invalidMetadataCases) {
+    assert.throws(
+      () =>
+        createLaneArtifactOutput(
+          createSafePatchInput({
+            evidenceRefs: [
+              {
+                ...customerLaneEvidenceRef,
+                metadata,
+              },
+            ],
+          }),
+        ),
+      /Track B customer lane evidence requires an explicit allowed data classification/i,
+    );
+  }
+});
+
+test("keeps Track B confidential evidence references metadata-only in public artifact export", () => {
+  assert.throws(
+    () =>
+      createLaneArtifactOutput(
+        createSafePatchInput({
+          evidenceRefs: [
+            {
+              ...customerLaneEvidenceRef,
+              metadata: {
+                ...customerLaneEvidenceRef.metadata,
+                rawCustomerRecord: "synthetic customer order payload",
+              },
+            },
+          ],
+        }),
+      ),
+    /Track B customer lane evidence references must not embed raw controlled material/i,
+  );
 });
 
 test("rejects generic local absolute paths in public artifact metadata without echoing raw values", () => {

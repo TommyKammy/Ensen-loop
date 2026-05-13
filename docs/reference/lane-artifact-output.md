@@ -37,6 +37,34 @@ the evidence payload itself.
 and `unsupported` evidence retrieval fails closed for artifact references instead
 of inventing retrievable evidence.
 
+## Protocol v0.4.0 Track B Classification
+
+Protocol `v0.4.0` adds the Track B customer / regulated evidence classification
+profile. Ensen-loop consumes that copied snapshot as local conformance guidance,
+not as a runtime dependency on Ensen-protocol and not as a compliance claim.
+
+Track A operational evidence remains the public fixture-safe owner-controlled
+evidence profile. Track B customer lane evidence is a separate boundary. When an
+EvidenceBundleRef explicitly marks Track B customer lane or controlled evidence,
+public artifact export and RunResult projection require an explicit
+`dataClassification` value from the Loop-supported Track B set:
+
+- `public`
+- `internal`
+- `customer-confidential`
+- `regulated`
+
+Missing, unknown, legacy, or inferred classification fails closed before public
+artifact export or RunResult evidence projection. Classification must come from
+bounded reference metadata; Ensen-loop must not infer it from URI shape,
+repository names, issue text, comments, or nearby operator summaries.
+
+Customer-confidential and regulated references remain references only. They may
+carry safe metadata such as producer, protocol version, validation command,
+reference kind, checksum status, and explicit classification. They must not
+embed raw customer files, raw records, credentials, secrets, private repository
+details, or workstation-local absolute paths in public artifacts.
+
 ## PR Draft Intent
 
 PR draft intent is only an intent artifact. It requires owner-controlled

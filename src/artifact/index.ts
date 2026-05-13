@@ -7,6 +7,7 @@ import type { WorkItem } from "../core/index.js";
 import type { LaneRunState } from "../lane/index.js";
 import {
   type EvidenceBundleRef,
+  validateCustomerLaneEvidenceRef,
   validateEvidenceBundleRef,
 } from "../protocol/index.js";
 import {
@@ -549,6 +550,16 @@ function collectEvidenceRefIssues(
         path: `evidenceRefs[${index}]`,
         message: "Artifact output evidence references must not contain raw secrets or workstation-local paths.",
       });
+    }
+
+    const customerLaneValidation = validateCustomerLaneEvidenceRef(validation.ref);
+    if (!customerLaneValidation.ok) {
+      for (const issue of customerLaneValidation.issues) {
+        issues.push({
+          path: `evidenceRefs[${index}].${issue.path}`,
+          message: issue.message,
+        });
+      }
     }
   }
 }
