@@ -451,6 +451,20 @@ test("rejects customer and regulated-looking public artifact values without echo
   }
 });
 
+test("allows public record artifact paths without customer-specific prefixes", () => {
+  const artifact = createLaneArtifactOutput(
+    createSafePatchInput({
+      artifactRef: {
+        uri: "artifacts/records/report.json",
+        mediaType: "application/json",
+      },
+    }),
+  );
+
+  assert.equal(artifact.artifact.uri, "artifacts/records/report.json");
+  assert.equal(validateLaneArtifactOutput(artifact).ok, true);
+});
+
 test("emits guarded PR draft intent without implying automatic merge authority", () => {
   const artifact = createLaneArtifactOutput({
     kind: "pr-draft-intent",

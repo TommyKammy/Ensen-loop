@@ -20,7 +20,7 @@ const customerIdentifierPatterns: readonly RegExp[] = [
 ];
 
 const customerPathPatterns: readonly RegExp[] = [
-  /\b(?:customers?|tenants?|accounts?|regulated|records?)\/[A-Za-z0-9._~@/-]+\b/gi,
+  /\b(?:customers?|tenants?|accounts?)\/[A-Za-z0-9._~@/-]+\b/gi,
   /<customer-ref>\/[A-Za-z0-9._~@/-]+\b/gi,
 ];
 
