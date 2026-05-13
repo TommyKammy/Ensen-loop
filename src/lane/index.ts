@@ -90,6 +90,7 @@ export interface PreparedLocalLaneWorkspace {
 
 export type BranchLaneRunSkeletonMode = "dry-run" | "prepare";
 export type LaneRepositoryClassification = "owner-controlled-dogfood" | "customer-repository";
+const CUSTOMER_REPOSITORY_PLACEHOLDER = "<customer-repository>";
 
 export interface AuthoritativeLaneRunScope {
   readonly repositoryClassification?: LaneRepositoryClassification;
@@ -401,7 +402,7 @@ export async function planBranchLaneRunSkeleton(
             id: `${laneRunId}-scope`,
             recordedAt,
             kind: "hypothesis" as const,
-            message: `authoritative scope: customer-repository ${scope.repositoryId}`,
+            message: "authoritative scope: customer-repository",
           },
           {
             id: `${laneRunId}-customer-allowlist`,
@@ -668,7 +669,18 @@ function validateAuthoritativeLaneRunScope(scope: AuthoritativeLaneRunScope): vo
 }
 
 function resolveLaneRepositoryClassification(scope: AuthoritativeLaneRunScope): LaneRepositoryClassification {
-  return scope.repositoryClassification ?? "owner-controlled-dogfood";
+  if (scope.repositoryClassification === undefined) {
+    return "owner-controlled-dogfood";
+  }
+
+  if (
+    scope.repositoryClassification === "owner-controlled-dogfood" ||
+    scope.repositoryClassification === "customer-repository"
+  ) {
+    return scope.repositoryClassification;
+  }
+
+  throw new Error("Authoritative repository classification is unsupported.");
 }
 
 function createLaneRepositoryProjection(
@@ -678,8 +690,8 @@ function createLaneRepositoryProjection(
   if (classification === "customer-repository") {
     return {
       classification,
-      id: scope.repositoryId,
-      slug: "<customer-repository>",
+      id: CUSTOMER_REPOSITORY_PLACEHOLDER,
+      slug: CUSTOMER_REPOSITORY_PLACEHOLDER,
     };
   }
 

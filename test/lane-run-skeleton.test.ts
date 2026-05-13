@@ -275,9 +275,10 @@ test("allows adapter-agnostic https repository URLs for prepare allowlist matchi
 test("requires explicit customer repo allowlist policy without leaking customer details", async () => {
   const roots = await createSkeletonRoots();
   const customerRoot = path.join(path.dirname(roots.repositoryRoot), "customer-repo");
+  const customerRepositoryId = "allowed-owner-allowed-repo-customer-root-identifier";
   const customerScope = {
     repositoryClassification: "customer-repository",
-    repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2CUST",
+    repositoryId: customerRepositoryId,
     repositorySlug: "allowed-owner/allowed-repo",
     repositoryUrl: "https://scm.invalid/allowed-owner/allowed-repo",
     repositoryRoot: customerRoot,
@@ -311,10 +312,12 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     });
 
     assert.equal(skeleton.repository.classification, "customer-repository");
+    assert.equal(skeleton.repository.id, "<customer-repository>");
     assert.equal(skeleton.repository.slug, "<customer-repository>");
     assert.equal(skeleton.repository.url, undefined);
 
     const serializedSkeleton = JSON.stringify(skeleton);
+    assert.doesNotMatch(serializedSkeleton, new RegExp(escapeRegExp(customerRepositoryId)));
     assert.doesNotMatch(serializedSkeleton, /allowed-owner/);
     assert.doesNotMatch(serializedSkeleton, /allowed-repo/);
     assert.doesNotMatch(serializedSkeleton, /scm\.invalid/);
@@ -324,6 +327,7 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     const state = await readLaneRunState(roots.stateRoot, skeleton.laneRunId);
     const serializedState = JSON.stringify(state);
     assert.match(serializedState, /customer repo allowlist matched/);
+    assert.doesNotMatch(serializedState, new RegExp(escapeRegExp(customerRepositoryId)));
     assert.doesNotMatch(serializedState, /allowed-owner/);
     assert.doesNotMatch(serializedState, /allowed-repo/);
     assert.doesNotMatch(serializedState, /scm\.invalid/);
@@ -384,6 +388,48 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_missing_allowlist")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
+  } finally {
+    await roots.cleanup();
+  }
+});
+
+test("rejects unsupported repository classifications before policy selection", async () => {
+  const roots = await createSkeletonRoots();
+
+  try {
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_unknown_repository_classification",
+          idempotencyKey: "issue-97-unknown-repository-classification",
+          repositoryRoot: roots.repositoryRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-97-unknown-classification",
+          authoritativeScope: {
+            repositoryClassification: "partner-repository" as never,
+            ownerControlled: true,
+            ownerIdentity: "owner-maintainer",
+            repositoryId: "repo_01HV7Y8M8F2KQ5W3P9R6T4N2LOOP",
+            repositorySlug: "TommyKammy/Ensen-loop",
+            repositoryUrl: "https://github.com/TommyKammy/Ensen-loop",
+            repositoryRoot: roots.repositoryRoot,
+          },
+          dogfoodRepositoryAllowlist: dogfoodAllowlist(roots.repositoryRoot),
+        }),
+      /repository classification is unsupported/,
+    );
+
+    await assert.rejects(
+      () => access(path.join(roots.worktreeRoot, "lane-runs", "run_unknown_repository_classification")),
+      /ENOENT/,
+    );
+    await assert.rejects(
+      () => access(path.join(roots.stateRoot, "lane-runs", "run_unknown_repository_classification")),
+      /ENOENT/,
+    );
   } finally {
     await roots.cleanup();
   }
