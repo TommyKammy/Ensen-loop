@@ -58,6 +58,30 @@ test("CLI diagnostics redact secret-like values", () => {
   assert.match(sanitized, /config contained <secret-like-value>/);
 });
 
+test("CLI diagnostics redact customer and regulated-looking values", () => {
+  const customerId = "customer_id=cust_synthetic_123456";
+  const customerPath = "customers/synthetic-pharma/orders/export.json";
+  const customerDomain = "alpha-customer.customer.example";
+  const regulatedRecord = "MRN-12345678 DOB 1970-01-01";
+  const message = [
+    `artifact blocked for ${customerId}`,
+    `artifact blocked for customer path ${customerPath}`,
+    `artifact blocked for tenant ${customerDomain}`,
+    `artifact blocked for synthetic regulated fixture ${regulatedRecord}`,
+  ].join("\n");
+
+  const sanitized = sanitizeCliErrorMessage(message);
+
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(customerId)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(customerPath)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(customerDomain)));
+  assert.doesNotMatch(sanitized, new RegExp(escapeRegExp(regulatedRecord)));
+  assert.match(sanitized, /artifact blocked for <customer-identifier>/);
+  assert.match(sanitized, /artifact blocked for customer path <customer-path>/);
+  assert.match(sanitized, /artifact blocked for tenant <customer-domain>/);
+  assert.match(sanitized, /artifact blocked for synthetic regulated fixture <regulated-record-like-value>/);
+});
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

@@ -124,6 +124,8 @@ const repoRelativePathPattern = /^(?:\.|[A-Za-z0-9._-][A-Za-z0-9._/-]*)$/;
 const artifactPathPattern = /^artifacts\/[A-Za-z0-9._~@/-]+$/;
 const mediaTypes = new Set<unknown>(["text/x-diff", "application/json", "text/markdown"]);
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const unsafePublicArtifactMessage =
+  "Lane artifact output must not contain raw secrets, customer identifiers, regulated content, or workstation-local absolute paths.";
 
 export function createLaneArtifactOutput(input: CreateLaneArtifactOutputInput): LaneArtifactOutput {
   const issues = collectCreateLaneArtifactOutputIssues(input);
@@ -356,7 +358,7 @@ function collectLaneArtifactOutputIssues(value: unknown): readonly LaneArtifactO
   if (containsUnsafePublicText(value)) {
     issues.push({
       path: "$",
-      message: "Lane artifact output must not contain raw secrets or workstation-local absolute paths.",
+      message: unsafePublicArtifactMessage,
     });
   }
 
@@ -460,7 +462,8 @@ function collectArtifactRefIssues(
   ) {
     issues.push({
       path: `${pathPrefix}.uri`,
-      message: "Artifact path must be repo-relative under artifacts/ without traversal, secrets, or workstation-local paths.",
+      message:
+        "Artifact path must be repo-relative under artifacts/ without traversal, secrets, customer identifiers, regulated content, or workstation-local paths.",
     });
   }
 
@@ -548,7 +551,8 @@ function collectEvidenceRefIssues(
     if (containsUnsafePublicText(evidenceRef)) {
       issues.push({
         path: `evidenceRefs[${index}]`,
-        message: "Artifact output evidence references must not contain raw secrets or workstation-local paths.",
+        message:
+          "Artifact output evidence references must not contain raw secrets, customer identifiers, regulated content, or workstation-local paths.",
       });
     }
 
