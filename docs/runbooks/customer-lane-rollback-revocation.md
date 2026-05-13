@@ -181,15 +181,20 @@ Remove only confirmed local artifacts:
 
 ```sh
 git worktree remove <customer-lane-worktree-path>
-git branch --merged HEAD --list <customer-lane-branch>
-git branch -d <customer-lane-branch>
 rm <local-artifact-path>
 ```
 
-Use `git branch -d <customer-lane-branch>` only when the branch is fully merged
-into the retained successor or current `HEAD`. For an intentionally abandoned,
-revoked, or superseded branch that remains unmerged, first record the retained
-commit or patch reference and the explicit operator confirmation, then use:
+Delete a local branch only through one of these guarded paths:
+
+```sh
+git branch --merged HEAD --list <customer-lane-branch>
+git branch -d <customer-lane-branch>
+```
+
+Use the merged branch path only when the branch is fully merged into the
+retained successor or current `HEAD`. For an intentionally abandoned, revoked,
+or superseded branch that remains unmerged, first record the retained commit or
+patch reference and the explicit operator confirmation, then use:
 
 ```sh
 git branch -D <customer-lane-branch>
