@@ -1,3 +1,4 @@
+export * from "./customer-lane-evidence.js";
 export * from "./evidence-bundle-ref.js";
 export * from "./local-lane-projection.js";
 export * from "./operational-evidence-profile.js";

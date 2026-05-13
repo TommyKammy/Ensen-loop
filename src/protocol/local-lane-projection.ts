@@ -1,4 +1,5 @@
 import type { LaneRunState, LaneRunStatus } from "../lane/index.js";
+import { validateCustomerLaneEvidenceRef } from "./customer-lane-evidence.js";
 import type { EvidenceBundleRef } from "./evidence-bundle-ref.js";
 import { validateEvidenceBundleRef } from "./evidence-bundle-ref.js";
 import type {
@@ -281,6 +282,11 @@ function projectEvidenceBundleRefs(
 
     if (validation.ref.correlationId !== correlationId) {
       throw new Error("Lane run evidence correlation identifier does not match the projection input.");
+    }
+
+    const customerLaneValidation = validateCustomerLaneEvidenceRef(validation.ref);
+    if (!customerLaneValidation.ok) {
+      throw new Error(`Lane run evidence is unsafe: ${formatIssues(customerLaneValidation.issues)}`);
     }
 
     projected.push(stripUndefined({
