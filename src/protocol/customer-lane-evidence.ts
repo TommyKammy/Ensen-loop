@@ -72,33 +72,20 @@ export function validateCustomerLaneEvidenceRef(
 export function isCustomerLaneEvidenceRef(evidenceRef: EvidenceBundleRef): boolean {
   const metadata = evidenceRef.metadata;
 
-  if (metadata === undefined) {
-    return false;
-  }
-
-  return (
-    metadata.evidenceTrack === "track-b" ||
-    customerLaneBoundaryValues.has(metadata.evidenceBoundary) ||
-    isControlledDataClassification(metadata.dataClassification) ||
-    metadata.controlledReference === true
-  );
+  return metadata !== undefined && hasCustomerLaneEvidenceSignal(metadata);
 }
 
 function collectCustomerLaneEvidenceRefIssues(
   evidenceRef: EvidenceBundleRef,
 ): readonly CustomerLaneEvidenceValidationIssue[] {
-  if (!isCustomerLaneEvidenceRef(evidenceRef)) {
-    return [];
-  }
-
   const issues: CustomerLaneEvidenceValidationIssue[] = [];
   const metadata = evidenceRef.metadata;
 
   if (metadata === undefined) {
-    issues.push({
-      path: "metadata",
-      message: "Track B customer lane evidence requires explicit bounded metadata.",
-    });
+    return issues;
+  }
+
+  if (!hasCustomerLaneEvidenceSignal(metadata)) {
     return issues;
   }
 
@@ -118,6 +105,17 @@ function collectCustomerLaneEvidenceRefIssues(
   }
 
   return issues;
+}
+
+function hasCustomerLaneEvidenceSignal(
+  metadata: Record<string, EvidenceBundleMetadataValue>,
+): boolean {
+  return (
+    metadata.evidenceTrack === "track-b" ||
+    customerLaneBoundaryValues.has(metadata.evidenceBoundary) ||
+    isControlledDataClassification(metadata.dataClassification) ||
+    metadata.controlledReference === true
+  );
 }
 
 function isControlledDataClassification(value: EvidenceBundleMetadataValue | undefined): boolean {
