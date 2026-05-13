@@ -32,6 +32,9 @@ const allowedClassifications = new Set<unknown>([
   "regulated",
 ]);
 const controlledClassifications = new Set<unknown>(["customer-confidential", "regulated"]);
+const commandMetadataPattern =
+  /^(?:npm (?:ci|test|run [a-z0-9:_-]+)|node --test [A-Za-z0-9._~@/-]+(?: [A-Za-z0-9._~@/-]+)*)$/;
+const boundedLabelPattern = /^[A-Za-z0-9][A-Za-z0-9._~-]{0,79}$/;
 const allowedCustomerLaneMetadataKeys = new Set([
   "producer",
   "producerBoundary",
@@ -50,7 +53,40 @@ const allowedCustomerLaneMetadataKeys = new Set([
 ]);
 const rawControlledMaterialKeyPattern =
   /(?:^|[A-Z_-])(?:raw|body|content|payload|record|file|credential|password|secret|token|apiKey|customer|tenant|account|repository)(?:$|[A-Z_-])/;
+const rawControlledMaterialValuePattern =
+  /\b(?:raw|body|content|payload|record|file|credential|password|secret|token|apiKey|customer|tenant|account|repository|patient|order)\b/i;
 const customerLaneBoundaryValues = new Set<unknown>(["customer-lane", "customer-regulated"]);
+const controlledMetadataStringValues = new Map<string, ReadonlySet<string>>([
+  ["producer", new Set(["ensen-loop"])],
+  ["producerBoundary", new Set(["loop-local", "owner-controlled", "customer-lane", "customer-regulated"])],
+  ["protocolVersion", new Set(["0.4.0"])],
+  [
+    "artifactKind",
+    new Set([
+      "phase4ArtifactEvidenceReference",
+      "localLaneEvidenceMetadata",
+      "validationReadyEvidenceMetadata",
+      "xGate2DryRunSmoke",
+    ]),
+  ],
+  [
+    "referenceKind",
+    new Set([
+      "controlledEvidenceReference",
+      "confidentialLocalReference",
+      "publicFixtureSafeArtifact",
+    ]),
+  ],
+  ["evidenceTrack", new Set(["track-b"])],
+  ["evidenceBoundary", customerLaneBoundaryValues as ReadonlySet<string>],
+  ["dataClassification", allowedClassifications as ReadonlySet<string>],
+]);
+const controlledMetadataBooleanKeys = new Set([
+  "controlledReference",
+  "embedsEvidencePayload",
+  "localDevelopmentOnly",
+  "writesDurableEvidence",
+]);
 
 export function validateCustomerLaneEvidenceRef(
   evidenceRef: EvidenceBundleRef,
@@ -98,8 +134,22 @@ function collectCustomerLaneEvidenceRefIssues(
   }
 
   if (
+    allowedClassifications.has(metadata.dataClassification) &&
+    metadata.evidenceBoundary === "customer-regulated" &&
+    !isControlledDataClassification(metadata.dataClassification)
+  ) {
+    issues.push({
+      path: "metadata.dataClassification",
+      message:
+        "Track B customer-regulated evidence requires customer-confidential or regulated data classification.",
+    });
+  }
+
+  if (
     isControlledDataClassification(metadata.dataClassification) ||
-    metadata.controlledReference === true
+    metadata.controlledReference === true ||
+    metadata.evidenceBoundary === "customer-regulated" ||
+    hasMalformedControlledReferenceSignal(metadata)
   ) {
     collectControlledReferenceMetadataIssues(issues, metadata);
   }
@@ -114,7 +164,8 @@ function hasCustomerLaneEvidenceSignal(
     metadata.evidenceTrack === "track-b" ||
     customerLaneBoundaryValues.has(metadata.evidenceBoundary) ||
     isControlledDataClassification(metadata.dataClassification) ||
-    metadata.controlledReference === true
+    metadata.controlledReference === true ||
+    hasMalformedControlledReferenceSignal(metadata)
   );
 }
 
@@ -126,6 +177,16 @@ function collectControlledReferenceMetadataIssues(
   issues: CustomerLaneEvidenceValidationIssue[],
   metadata: Record<string, EvidenceBundleMetadataValue>,
 ): void {
+  if (
+    Object.hasOwn(metadata, "controlledReference") &&
+    typeof metadata.controlledReference !== "boolean"
+  ) {
+    issues.push({
+      path: "metadata.controlledReference",
+      message: "Track B customer lane evidence controlledReference must be boolean when present.",
+    });
+  }
+
   if (metadata.embedsEvidencePayload !== false) {
     issues.push({
       path: "metadata.embedsEvidencePayload",
@@ -142,11 +203,70 @@ function collectControlledReferenceMetadataIssues(
       continue;
     }
 
+    if (key === "controlledReference" && typeof value !== "boolean") {
+      continue;
+    }
+
     if (typeof value === "string" && containsUnsafePublicArtifactText(value)) {
       issues.push({
         path: `metadata.${key}`,
         message: "Track B customer lane evidence references must not embed raw controlled material.",
       });
+      continue;
+    }
+
+    if (!isBoundedControlledMetadataValue(key, value)) {
+      issues.push({
+        path: `metadata.${key}`,
+        message:
+          "Track B customer lane evidence references require bounded controlled metadata values.",
+      });
     }
   }
+}
+
+function hasMalformedControlledReferenceSignal(
+  metadata: Record<string, EvidenceBundleMetadataValue>,
+): boolean {
+  return (
+    Object.hasOwn(metadata, "controlledReference") &&
+    metadata.controlledReference !== true &&
+    metadata.controlledReference !== false
+  );
+}
+
+function isBoundedControlledMetadataValue(
+  key: string,
+  value: EvidenceBundleMetadataValue,
+): boolean {
+  if (value === null) {
+    return false;
+  }
+
+  if (controlledMetadataBooleanKeys.has(key)) {
+    return typeof value === "boolean";
+  }
+
+  if (typeof value === "number") {
+    return false;
+  }
+
+  if (typeof value !== "string") {
+    return true;
+  }
+
+  if (key === "validationCommand") {
+    return commandMetadataPattern.test(value);
+  }
+
+  const allowedValues = controlledMetadataStringValues.get(key);
+  if (allowedValues !== undefined) {
+    return allowedValues.has(value);
+  }
+
+  if (rawControlledMaterialValuePattern.test(value)) {
+    return false;
+  }
+
+  return boundedLabelPattern.test(value);
 }

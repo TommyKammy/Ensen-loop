@@ -62,3 +62,91 @@ test("fails closed when controlled classification-only references embed raw meta
     );
   }
 });
+
+test("fails closed when customer-regulated boundary uses public classification", () => {
+  const result = validateCustomerLaneEvidenceRef({
+    ...safeEvidenceRef,
+    metadata: {
+      ...safeEvidenceRef.metadata,
+      evidenceTrack: "track-b",
+      evidenceBoundary: "customer-regulated",
+      dataClassification: "public",
+      embedsEvidencePayload: false,
+    },
+  });
+
+  assert.equal(result.ok, false);
+
+  if (!result.ok) {
+    assert.deepEqual(
+      result.issues.map((issue) => issue.path),
+      ["metadata.dataClassification"],
+    );
+  }
+});
+
+test("fails closed when controlledReference is malformed", () => {
+  const result = validateCustomerLaneEvidenceRef({
+    ...safeEvidenceRef,
+    metadata: {
+      ...safeEvidenceRef.metadata,
+      controlledReference: "true",
+      embedsEvidencePayload: false,
+    },
+  });
+
+  assert.equal(result.ok, false);
+
+  if (!result.ok) {
+    assert.deepEqual(
+      result.issues.map((issue) => issue.path),
+      ["metadata.dataClassification", "metadata.controlledReference"],
+    );
+  }
+});
+
+test("rejects free-form values in controlled metadata fields", () => {
+  for (const [key, value] of [
+    ["producer", "customer order for Alice"],
+    ["referenceKind", "customer order for Alice"],
+    ["validationCommand", "customer order for Alice"],
+  ] as const) {
+    const result = validateCustomerLaneEvidenceRef({
+      ...safeEvidenceRef,
+      metadata: {
+        ...safeEvidenceRef.metadata,
+        dataClassification: "regulated",
+        embedsEvidencePayload: false,
+        [key]: value,
+      },
+    });
+
+    assert.equal(result.ok, false, `${key} must reject free-form controlled text`);
+
+    if (!result.ok) {
+      assert.ok(
+        result.issues.some((issue) => issue.path === `metadata.${key}`),
+        `${key} rejection must point at the controlled metadata field`,
+      );
+    }
+  }
+});
+
+test("accepts bounded values in controlled metadata fields", () => {
+  const result = validateCustomerLaneEvidenceRef({
+    ...safeEvidenceRef,
+    metadata: {
+      ...safeEvidenceRef.metadata,
+      protocolVersion: "0.4.0",
+      validationCommand: "npm test",
+      evidenceTrack: "track-b",
+      evidenceBoundary: "customer-lane",
+      dataClassification: "regulated",
+      referenceKind: "controlledEvidenceReference",
+      controlledReference: true,
+      embedsEvidencePayload: false,
+    },
+  });
+
+  assert.deepEqual(result, { ok: true });
+});

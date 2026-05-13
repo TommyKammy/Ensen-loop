@@ -61,9 +61,11 @@ repository names, issue text, comments, or nearby operator summaries.
 
 Customer-confidential and regulated references remain references only. They may
 carry safe metadata such as producer, protocol version, validation command,
-reference kind, checksum status, and explicit classification. They must not
-embed raw customer files, raw records, credentials, secrets, private repository
-details, or workstation-local absolute paths in public artifacts.
+reference kind, checksum status, and explicit classification. Controlled
+metadata values must come from bounded protocol vocabulary or bounded validation
+command forms; free-form customer text is not safe reference metadata. They must
+not embed raw customer files, raw records, credentials, secrets, private
+repository details, or workstation-local absolute paths in public artifacts.
 
 ## PR Draft Intent
 

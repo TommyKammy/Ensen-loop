@@ -188,8 +188,9 @@ Track B customer lane EvidenceBundleRef metadata must carry explicit Protocol
 Ensen-loop accepts `public`, `internal`, `customer-confidential`, and
 `regulated` for that boundary. Missing, unknown, or inferred classification
 blocks the projection. Customer-confidential and regulated references must stay
-metadata-only and must not expose raw customer files, raw records, credentials,
-secrets, private repository details, or workstation-local absolute paths.
+metadata-only, use bounded protocol vocabulary for controlled metadata fields,
+and must not expose raw customer files, raw records, credentials, secrets,
+private repository details, or workstation-local absolute paths.
 
 Phase 3 local lane persistence may write Ensen-loop-owned metadata under the
 prepared local state path using an EvidenceBundleRef `local_path` URI. That file
