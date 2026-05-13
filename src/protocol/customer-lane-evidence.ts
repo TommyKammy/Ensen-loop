@@ -50,6 +50,11 @@ const allowedCustomerLaneMetadataKeys = new Set([
   "localDevelopmentOnly",
   "writesDurableEvidence",
   "checksumUnavailableReason",
+  "approvalState",
+  "artifactIntent",
+  "externalApplicationState",
+  "supersedesRef",
+  "decisionBoundary",
 ]);
 const rawControlledMaterialKeyPattern =
   /(?:^|[A-Z_-])(?:raw|body|content|payload|record|file|credential|password|secret|token|apiKey|customer|tenant|account|repository)(?:$|[A-Z_-])/;
@@ -80,6 +85,13 @@ const controlledMetadataStringValues = new Map<string, ReadonlySet<string>>([
   ["evidenceTrack", new Set(["track-b"])],
   ["evidenceBoundary", customerLaneBoundaryValues as ReadonlySet<string>],
   ["dataClassification", allowedClassifications as ReadonlySet<string>],
+  [
+    "approvalState",
+    new Set(["approval-required", "approved", "rejected", "revoked", "superseded"]),
+  ],
+  ["artifactIntent", new Set(["draft-only", "evidence-reference", "revocation-record", "supersession-record"])],
+  ["externalApplicationState", new Set(["not-applied", "not-applicable", "withdrawn"])],
+  ["decisionBoundary", new Set(["operator-controlled", "authoritative-workflow-boundary"])],
 ]);
 const controlledMetadataBooleanKeys = new Set([
   "controlledReference",

@@ -177,3 +177,42 @@ test("accepts bounded values in controlled metadata fields", () => {
 
   assert.deepEqual(result, { ok: true });
 });
+
+test("accepts bounded revoked and superseded Track B evidence states", () => {
+  for (const [approvalState, extraMetadata] of [
+    [
+      "revoked",
+      {
+        artifactIntent: "revocation-record",
+        externalApplicationState: "withdrawn",
+      },
+    ],
+    [
+      "superseded",
+      {
+        artifactIntent: "supersession-record",
+        externalApplicationState: "not-applied",
+        supersedesRef: "evb_previousEvidence01",
+      },
+    ],
+  ] as const) {
+    const result = validateCustomerLaneEvidenceRef({
+      ...safeEvidenceRef,
+      metadata: {
+        ...safeEvidenceRef.metadata,
+        protocolVersion: "0.4.0",
+        evidenceTrack: "track-b",
+        evidenceBoundary: "customer-lane",
+        dataClassification: "customer-confidential",
+        referenceKind: "controlledEvidenceReference",
+        controlledReference: true,
+        embedsEvidencePayload: false,
+        approvalState,
+        decisionBoundary: "operator-controlled",
+        ...extraMetadata,
+      },
+    });
+
+    assert.deepEqual(result, { ok: true }, `${approvalState} evidence metadata must be bounded`);
+  }
+});
