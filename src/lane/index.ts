@@ -954,9 +954,19 @@ function isRepositorySlugPart(value: unknown): value is string {
 }
 
 function isTrustedPolicyText(value: unknown): value is string {
+  if (typeof value !== "string") {
+    return false;
+  }
+
+  const trimmedValue = value.trim();
+
+  return trimmedValue.length > 0 && !isPlaceholderPolicyText(trimmedValue);
+}
+
+function isPlaceholderPolicyText(value: string): boolean {
   return (
-    isNonEmptyString(value) &&
-    !/\b(?:todo|tbd|sample|placeholder|example|fake)\b/i.test(value)
+    /^(?:todo|tbd)(?:\b|[-_ .:/#]).*/i.test(value) ||
+    /^(?:sample|placeholder|example|fake)(?:[-_ .:/#]*\d*)?$/i.test(value)
   );
 }
 

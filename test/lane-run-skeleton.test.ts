@@ -282,7 +282,7 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     repositorySlug: "allowed-owner/allowed-repo",
     repositoryUrl: "https://scm.invalid/allowed-owner/allowed-repo",
     repositoryRoot: customerRoot,
-    customerRepositoryPurpose: "authorized bounded local preparation",
+    customerRepositoryPurpose: "authorized bounded local preparation for an example escalation memo",
     customerApprovalNote: "approval note recorded for bounded local preparation",
   } as const;
 
@@ -305,7 +305,7 @@ test("requires explicit customer repo allowlist policy without leaking customer 
           owner: "allowed-owner",
           repo: "allowed-repo",
           repositoryRoot: customerRoot,
-          purpose: "authorized bounded local preparation",
+          purpose: "authorized bounded local preparation for an example escalation memo",
           approvalNote: "approval note recorded for bounded local preparation",
         },
       ],
@@ -322,6 +322,7 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     assert.doesNotMatch(serializedSkeleton, /allowed-repo/);
     assert.doesNotMatch(serializedSkeleton, /scm\.invalid/);
     assert.doesNotMatch(serializedSkeleton, /authorized bounded local preparation/);
+    assert.doesNotMatch(serializedSkeleton, /example escalation memo/);
     assert.doesNotMatch(serializedSkeleton, new RegExp(escapeRegExp(customerRoot)));
 
     const state = await readLaneRunState(roots.stateRoot, skeleton.laneRunId);
@@ -332,6 +333,7 @@ test("requires explicit customer repo allowlist policy without leaking customer 
     assert.doesNotMatch(serializedState, /allowed-repo/);
     assert.doesNotMatch(serializedState, /scm\.invalid/);
     assert.doesNotMatch(serializedState, /authorized bounded local preparation/);
+    assert.doesNotMatch(serializedState, /example escalation memo/);
     assert.doesNotMatch(serializedState, new RegExp(escapeRegExp(customerRoot)));
 
     await assert.rejects(
@@ -384,10 +386,72 @@ test("requires explicit customer repo allowlist policy without leaking customer 
       },
     );
 
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_customer_blank_policy_text",
+          idempotencyKey: "issue-97-customer-blank-policy-text",
+          repositoryRoot: customerRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-97-customer-blank-policy-text",
+          authoritativeScope: {
+            ...customerScope,
+            customerRepositoryPurpose: "   ",
+          },
+          customerRepositoryAllowlist: [
+            {
+              repositoryClassification: "customer-repository",
+              owner: "allowed-owner",
+              repo: "allowed-repo",
+              repositoryRoot: customerRoot,
+              purpose: "   ",
+              approvalNote: "approval note recorded for bounded local preparation",
+            },
+          ],
+        }),
+      /customerRepositoryPurpose/,
+    );
+
+    await assert.rejects(
+      () =>
+        planBranchLaneRunSkeleton({
+          mode: "prepare",
+          workItem: readyWorkItem,
+          laneRunId: "run_customer_placeholder_policy_text",
+          idempotencyKey: "issue-97-customer-placeholder-policy-text",
+          repositoryRoot: customerRoot,
+          worktreeRoot: roots.worktreeRoot,
+          stateRoot: roots.stateRoot,
+          branchName: "codex/issue-97-customer-placeholder-policy-text",
+          authoritativeScope: {
+            ...customerScope,
+            customerApprovalNote: "placeholder",
+          },
+          customerRepositoryAllowlist: [
+            {
+              repositoryClassification: "customer-repository",
+              owner: "allowed-owner",
+              repo: "allowed-repo",
+              repositoryRoot: customerRoot,
+              purpose: "authorized bounded local preparation for an example escalation memo",
+              approvalNote: "placeholder",
+            },
+          ],
+        }),
+      /customerApprovalNote/,
+    );
+
     await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_missing_allowlist")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_missing_allowlist")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
     await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_wrong_purpose")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_blank_policy_text")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_blank_policy_text")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.worktreeRoot, "lane-runs", "run_customer_placeholder_policy_text")), /ENOENT/);
+    await assert.rejects(() => access(path.join(roots.stateRoot, "lane-runs", "run_customer_placeholder_policy_text")), /ENOENT/);
   } finally {
     await roots.cleanup();
   }
