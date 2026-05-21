@@ -90,7 +90,96 @@ export interface PreparedLocalLaneWorkspace {
 
 export type BranchLaneRunSkeletonMode = "dry-run" | "prepare";
 export type LaneRepositoryClassification = "owner-controlled-dogfood" | "customer-repository";
+export type LaneRunQueueStatus = "queued" | "completed" | "revoked" | "superseded";
+export type LaneRunLockStatus = "active" | "completed" | "revoked" | "superseded";
 const CUSTOMER_REPOSITORY_PLACEHOLDER = "<customer-repository>";
+
+export interface LaneRunQueueDiagnostics {
+  readonly stableWorkItemId: string;
+  readonly laneId: string;
+  readonly source: string;
+  readonly repositoryClassification: LaneRepositoryClassification;
+  readonly status: LaneRunQueueStatus;
+}
+
+export interface LaneRunLockDiagnostics {
+  readonly stableWorkItemId: string;
+  readonly laneId: string;
+  readonly source: string;
+  readonly repositoryClassification: LaneRepositoryClassification;
+  readonly lockStatus: LaneRunLockStatus;
+  readonly laneRunId: string;
+  readonly reason: string;
+}
+
+export interface LaneRunQueueRecord {
+  readonly schemaVersion: "ensen.lane-run-queue.v1";
+  readonly id: string;
+  readonly stableWorkItemId: string;
+  readonly workItemId: WorkItem["id"];
+  readonly source: string;
+  readonly laneId: string;
+  readonly repositoryClassification: LaneRepositoryClassification;
+  readonly status: LaneRunQueueStatus;
+  readonly queuedAt: string;
+  readonly updatedAt: string;
+  readonly startsAgentExecution: false;
+  readonly metadata: Record<string, string>;
+  readonly publicDiagnostics: LaneRunQueueDiagnostics;
+}
+
+export interface LaneRunLock {
+  readonly schemaVersion: "ensen.lane-run-lock.v1";
+  readonly stableWorkItemId: string;
+  readonly queueRecordId: string;
+  readonly laneRunId: string;
+  readonly laneId: string;
+  readonly source: string;
+  readonly repositoryClassification: LaneRepositoryClassification;
+  readonly status: LaneRunLockStatus;
+  readonly active: boolean;
+  readonly claimedAt: string;
+  readonly claimedBy: string;
+  readonly releasedAt?: string;
+  readonly startsAgentExecution: false;
+}
+
+export interface EnqueueLaneRunInput {
+  readonly stableWorkItemId: string;
+  readonly workItemId: WorkItem["id"];
+  readonly source: string;
+  readonly laneId: string;
+  readonly repositoryClassification: LaneRepositoryClassification;
+  readonly queuedAt: string;
+  readonly metadata?: Record<string, string>;
+}
+
+export interface ClaimQueuedLaneRunInput {
+  readonly stableWorkItemId: string;
+  readonly laneRunId: string;
+  readonly claimedBy: string;
+  readonly claimedAt: string;
+}
+
+export interface CompleteLaneRunLockInput {
+  readonly stableWorkItemId: string;
+  readonly laneRunId: string;
+  readonly completedAt: string;
+  readonly terminalStatus: Exclude<LaneRunLockStatus, "active">;
+}
+
+export type ClaimQueuedLaneRunResult =
+  | {
+      readonly ok: true;
+      readonly lock: LaneRunLock;
+      readonly publicDiagnostics: LaneRunLockDiagnostics;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+      readonly lock: LaneRunLock;
+      readonly publicDiagnostics: LaneRunLockDiagnostics;
+    };
 
 export interface AuthoritativeLaneRunScope {
   readonly repositoryClassification?: LaneRepositoryClassification;
@@ -187,6 +276,8 @@ export const preparedLocalLaneMarkerSchemaVersion = "ensen.local-lane-prepared.v
 
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
+const stableWorkItemIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const laneIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const branchNamePattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
@@ -201,6 +292,8 @@ const laneRunStatuses = new Set<unknown>([
   "completed",
   "failed",
 ]);
+const laneRunQueueStatuses = new Set<unknown>(["queued", "completed", "revoked", "superseded"]);
+const laneRunLockStatuses = new Set<unknown>(["active", "completed", "revoked", "superseded"]);
 
 export function createLaneJournal(input: CreateLaneJournalInput): LaneJournal {
   return {
@@ -552,6 +645,342 @@ export async function readLaneRunState(stateRoot: string, laneRunId: string): Pr
   }
 
   return state;
+}
+
+export function resolveLaneRunQueueRecordPath(stateRoot: string, stableWorkItemId: string): string {
+  assertSafeStableWorkItemId(stableWorkItemId);
+
+  const resolvedRoot = path.resolve(stateRoot);
+  const queueRoot = path.join(resolvedRoot, "lane-run-queue");
+  const queuePath = path.join(queueRoot, `${stableWorkItemId}.json`);
+  const relativePath = path.relative(resolvedRoot, queuePath);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Lane run queue paths must stay inside the configured state root.");
+  }
+
+  return queuePath;
+}
+
+export function resolveLaneRunLockPath(stateRoot: string, stableWorkItemId: string): string {
+  assertSafeStableWorkItemId(stableWorkItemId);
+
+  const resolvedRoot = path.resolve(stateRoot);
+  const lockRoot = path.join(resolvedRoot, "lane-run-locks");
+  const lockPath = path.join(lockRoot, `${stableWorkItemId}.json`);
+  const relativePath = path.relative(resolvedRoot, lockPath);
+
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Lane run lock paths must stay inside the configured state root.");
+  }
+
+  return lockPath;
+}
+
+export async function enqueueLaneRun(
+  stateRoot: string,
+  input: EnqueueLaneRunInput,
+): Promise<LaneRunQueueRecord> {
+  assertSafeStableWorkItemId(input.stableWorkItemId);
+  assertSafeLaneQueueMetadata(input);
+
+  const record = toSerializableLaneRunQueueRecord({
+    schemaVersion: "ensen.lane-run-queue.v1",
+    id: `queue-${input.stableWorkItemId}`,
+    stableWorkItemId: input.stableWorkItemId,
+    workItemId: input.workItemId,
+    source: input.source,
+    laneId: input.laneId,
+    repositoryClassification: input.repositoryClassification,
+    status: "queued",
+    queuedAt: input.queuedAt,
+    updatedAt: input.queuedAt,
+    startsAgentExecution: false,
+    metadata: input.metadata ?? {},
+    publicDiagnostics: {
+      stableWorkItemId: input.stableWorkItemId,
+      laneId: input.laneId,
+      source: input.source,
+      repositoryClassification: input.repositoryClassification,
+      status: "queued",
+    },
+  });
+
+  await writeLaneRunQueueRecord(stateRoot, record);
+
+  return record;
+}
+
+export async function readLaneRunQueueRecord(
+  stateRoot: string,
+  stableWorkItemId: string,
+): Promise<LaneRunQueueRecord> {
+  const queuePath = resolveLaneRunQueueRecordPath(stateRoot, stableWorkItemId);
+  const parsed = await readJsonStateFile(stateRoot, queuePath);
+  const record = parseLaneRunQueueRecord(parsed);
+
+  if (record.stableWorkItemId !== stableWorkItemId) {
+    throw new Error("Lane run queue record identifiers do not match the requested work item.");
+  }
+
+  return record;
+}
+
+export async function claimQueuedLaneRun(
+  stateRoot: string,
+  input: ClaimQueuedLaneRunInput,
+): Promise<ClaimQueuedLaneRunResult> {
+  assertSafeStableWorkItemId(input.stableWorkItemId);
+
+  if (!isLaneRunId(input.laneRunId) || !isNonEmptyString(input.claimedBy) || !isIsoDateTime(input.claimedAt)) {
+    throw new Error("Lane run claim input is malformed.");
+  }
+
+  const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+
+  if (queueRecord.status !== "queued") {
+    throw new Error(`Lane run queue record is not claimable: ${queueRecord.status}.`);
+  }
+
+  const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+
+  if (existingLock?.active === true) {
+    const reason = `already claimed by active lane run ${existingLock.laneRunId}`;
+
+    return {
+      ok: false,
+      reason,
+      lock: existingLock,
+      publicDiagnostics: createLaneRunLockDiagnostics(existingLock, reason),
+    };
+  }
+
+  const lock = toSerializableLaneRunLock({
+    schemaVersion: "ensen.lane-run-lock.v1",
+    stableWorkItemId: queueRecord.stableWorkItemId,
+    queueRecordId: queueRecord.id,
+    laneRunId: input.laneRunId,
+    laneId: queueRecord.laneId,
+    source: queueRecord.source,
+    repositoryClassification: queueRecord.repositoryClassification,
+    status: "active",
+    active: true,
+    claimedAt: input.claimedAt,
+    claimedBy: input.claimedBy,
+    startsAgentExecution: false,
+  });
+
+  await writeLaneRunLock(stateRoot, lock);
+
+  return {
+    ok: true,
+    lock,
+    publicDiagnostics: createLaneRunLockDiagnostics(lock, "claimed"),
+  };
+}
+
+export async function readLaneRunLock(stateRoot: string, stableWorkItemId: string): Promise<LaneRunLock> {
+  const lockPath = resolveLaneRunLockPath(stateRoot, stableWorkItemId);
+  const parsed = await readJsonStateFile(stateRoot, lockPath);
+  const lock = parseLaneRunLock(parsed);
+
+  if (lock.stableWorkItemId !== stableWorkItemId) {
+    throw new Error("Lane run lock identifiers do not match the requested work item.");
+  }
+
+  return lock;
+}
+
+export async function completeLaneRunLock(
+  stateRoot: string,
+  input: CompleteLaneRunLockInput,
+): Promise<LaneRunLock> {
+  assertSafeStableWorkItemId(input.stableWorkItemId);
+
+  if (
+    !isLaneRunId(input.laneRunId) ||
+    !isIsoDateTime(input.completedAt) ||
+    !laneRunLockStatuses.has(input.terminalStatus)
+  ) {
+    throw new Error("Lane run lock completion input is malformed.");
+  }
+
+  const existingLock = await readLaneRunLock(stateRoot, input.stableWorkItemId);
+
+  if (existingLock.laneRunId !== input.laneRunId) {
+    throw new Error("Lane run lock completion does not match the active lane run.");
+  }
+
+  const completedLock = toSerializableLaneRunLock({
+    ...existingLock,
+    status: input.terminalStatus,
+    active: false,
+    releasedAt: input.completedAt,
+  });
+
+  await writeLaneRunLock(stateRoot, completedLock);
+
+  const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+  await writeLaneRunQueueRecord(stateRoot, {
+    ...queueRecord,
+    status: input.terminalStatus,
+    updatedAt: input.completedAt,
+    publicDiagnostics: {
+      ...queueRecord.publicDiagnostics,
+      status: input.terminalStatus,
+    },
+  });
+
+  return completedLock;
+}
+
+async function readOptionalLaneRunLock(
+  stateRoot: string,
+  stableWorkItemId: string,
+): Promise<LaneRunLock | undefined> {
+  try {
+    return await readLaneRunLock(stateRoot, stableWorkItemId);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
+async function writeLaneRunQueueRecord(stateRoot: string, record: LaneRunQueueRecord): Promise<string> {
+  const validatedRecord = parseLaneRunQueueRecord(record);
+  const queuePath = resolveLaneRunQueueRecordPath(stateRoot, validatedRecord.stableWorkItemId);
+
+  await writeJsonStateFile(stateRoot, queuePath, toSerializableLaneRunQueueRecord(validatedRecord));
+
+  return queuePath;
+}
+
+async function writeLaneRunLock(stateRoot: string, lock: LaneRunLock): Promise<string> {
+  const validatedLock = parseLaneRunLock(lock);
+  const lockPath = resolveLaneRunLockPath(stateRoot, validatedLock.stableWorkItemId);
+
+  await writeJsonStateFile(stateRoot, lockPath, toSerializableLaneRunLock(validatedLock));
+
+  return lockPath;
+}
+
+async function readJsonStateFile(stateRoot: string, statePath: string): Promise<unknown> {
+  const realRoot = await assertGenericStatePathSafeForRead(stateRoot, statePath);
+  const file = await open(statePath, constants.O_RDONLY | noFollowFlag() | nonBlockingFlag());
+  let contents: string;
+
+  try {
+    await assertOpenedGenericStateFileSafeForAccess(realRoot, statePath, file);
+    contents = await file.readFile("utf8");
+  } finally {
+    await file.close();
+  }
+
+  return JSON.parse(contents) as unknown;
+}
+
+async function writeJsonStateFile(
+  stateRoot: string,
+  statePath: string,
+  value: unknown,
+): Promise<void> {
+  const realRoot = await assertGenericStatePathSafeForWrite(stateRoot, statePath);
+  await mkdir(path.dirname(statePath), { recursive: true });
+  await assertGenericStatePathSafeForWrite(stateRoot, statePath);
+
+  const file = await open(
+    statePath,
+    constants.O_RDWR | constants.O_CREAT | noFollowFlag() | nonBlockingFlag(),
+    0o600,
+  );
+
+  try {
+    await assertOpenedGenericStateFileSafeForAccess(realRoot, statePath, file);
+    await file.truncate(0);
+    await file.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+  } finally {
+    await file.close();
+  }
+}
+
+async function assertGenericStatePathSafeForWrite(stateRoot: string, statePath: string): Promise<string> {
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const stateDirectory = path.dirname(statePath);
+
+  await assertExistingPathSafe(realRoot, stateDirectory, "directory");
+  await assertExistingPathSafe(realRoot, statePath, "file");
+
+  return realRoot;
+}
+
+async function assertGenericStatePathSafeForRead(stateRoot: string, statePath: string): Promise<string> {
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const stateDirectory = path.dirname(statePath);
+
+  await assertExistingPathSafe(realRoot, stateDirectory, "directory");
+  await assertExistingPathSafe(realRoot, statePath, "file");
+
+  return realRoot;
+}
+
+async function assertOpenedGenericStateFileSafeForAccess(
+  realRoot: string,
+  statePath: string,
+  file: FileHandle,
+): Promise<void> {
+  const openedStats = await file.stat();
+
+  if (!openedStats.isFile()) {
+    throw new Error("Lane run durable state file path must be a regular file.");
+  }
+
+  const pathStats = await lstat(statePath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      throw new Error("Lane run durable state file changed during access.");
+    }
+
+    throw error;
+  });
+
+  if (!sameFileStats(openedStats, pathStats)) {
+    throw new Error("Lane run durable state file changed during access.");
+  }
+
+  await assertExistingPathSafe(realRoot, statePath, "file");
+}
+
+function assertSafeStableWorkItemId(stableWorkItemId: string): void {
+  if (!stableWorkItemIdPattern.test(stableWorkItemId)) {
+    throw new Error("Stable work item identifiers may only contain letters, numbers, dots, underscores, colons, and hyphens.");
+  }
+}
+
+function assertSafeLaneQueueMetadata(input: EnqueueLaneRunInput): void {
+  if (
+    !isNonEmptyString(input.workItemId) ||
+    !isNonEmptyString(input.source) ||
+    !laneIdPattern.test(input.laneId) ||
+    !isLaneRepositoryClassification(input.repositoryClassification) ||
+    !isIsoDateTime(input.queuedAt) ||
+    !isStringMetadata(input.metadata ?? {})
+  ) {
+    throw new Error("Lane run queue input is malformed.");
+  }
+}
+
+function createLaneRunLockDiagnostics(lock: LaneRunLock, reason: string): LaneRunLockDiagnostics {
+  return {
+    stableWorkItemId: lock.stableWorkItemId,
+    laneId: lock.laneId,
+    source: lock.source,
+    repositoryClassification: lock.repositoryClassification,
+    lockStatus: lock.status,
+    laneRunId: lock.laneRunId,
+    reason,
+  };
 }
 
 function validateLaneRunStateForWrite(state: LaneRunState): LaneRunState {
@@ -1293,6 +1722,174 @@ function parseLaneRunState(value: unknown): LaneRunState {
   return value as unknown as LaneRunState;
 }
 
+function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
+  if (!isRecord(value)) {
+    throw new Error("Lane run queue record must be a JSON object.");
+  }
+
+  if (
+    value.startsAgentExecution !== false ||
+    !hasExactKeys(value, [
+      "schemaVersion",
+      "id",
+      "stableWorkItemId",
+      "workItemId",
+      "source",
+      "laneId",
+      "repositoryClassification",
+      "status",
+      "queuedAt",
+      "updatedAt",
+      "startsAgentExecution",
+      "metadata",
+      "publicDiagnostics",
+    ]) ||
+    value.schemaVersion !== "ensen.lane-run-queue.v1" ||
+    !isNonEmptyString(value.id) ||
+    !stableWorkItemIdPattern.test(String(value.stableWorkItemId)) ||
+    !isNonEmptyString(value.workItemId) ||
+    !isNonEmptyString(value.source) ||
+    !laneIdPattern.test(String(value.laneId)) ||
+    !isLaneRepositoryClassification(value.repositoryClassification) ||
+    !laneRunQueueStatuses.has(value.status) ||
+    !isIsoDateTime(value.queuedAt) ||
+    !isIsoDateTime(value.updatedAt) ||
+    !isStringMetadata(value.metadata) ||
+    !isLaneRunQueueDiagnostics(value.publicDiagnostics)
+  ) {
+    throw new Error("Lane run queue record is malformed.");
+  }
+
+  const record = value as unknown as LaneRunQueueRecord;
+
+  if (
+    record.publicDiagnostics.stableWorkItemId !== record.stableWorkItemId ||
+    record.publicDiagnostics.laneId !== record.laneId ||
+    record.publicDiagnostics.source !== record.source ||
+    record.publicDiagnostics.repositoryClassification !== record.repositoryClassification ||
+    record.publicDiagnostics.status !== record.status
+  ) {
+    throw new Error("Lane run queue record diagnostics do not match authoritative queue state.");
+  }
+
+  return record;
+}
+
+function parseLaneRunLock(value: unknown): LaneRunLock {
+  if (!isRecord(value)) {
+    throw new Error("Lane run lock must be a JSON object.");
+  }
+
+  const expectedKeys =
+    Object.hasOwn(value, "releasedAt")
+      ? [
+          "schemaVersion",
+          "stableWorkItemId",
+          "queueRecordId",
+          "laneRunId",
+          "laneId",
+          "source",
+          "repositoryClassification",
+          "status",
+          "active",
+          "claimedAt",
+          "claimedBy",
+          "releasedAt",
+          "startsAgentExecution",
+        ]
+      : [
+          "schemaVersion",
+          "stableWorkItemId",
+          "queueRecordId",
+          "laneRunId",
+          "laneId",
+          "source",
+          "repositoryClassification",
+          "status",
+          "active",
+          "claimedAt",
+          "claimedBy",
+          "startsAgentExecution",
+        ];
+
+  if (
+    value.startsAgentExecution !== false ||
+    !hasExactKeys(value, expectedKeys) ||
+    value.schemaVersion !== "ensen.lane-run-lock.v1" ||
+    !stableWorkItemIdPattern.test(String(value.stableWorkItemId)) ||
+    !isNonEmptyString(value.queueRecordId) ||
+    !isLaneRunId(value.laneRunId) ||
+    !laneIdPattern.test(String(value.laneId)) ||
+    !isNonEmptyString(value.source) ||
+    !isLaneRepositoryClassification(value.repositoryClassification) ||
+    !laneRunLockStatuses.has(value.status) ||
+    typeof value.active !== "boolean" ||
+    !isIsoDateTime(value.claimedAt) ||
+    !isNonEmptyString(value.claimedBy) ||
+    (Object.hasOwn(value, "releasedAt") && !isIsoDateTime(value.releasedAt))
+  ) {
+    throw new Error("Lane run lock is malformed.");
+  }
+
+  const lock = value as unknown as LaneRunLock;
+
+  if ((lock.status === "active") !== lock.active || (lock.status !== "active" && lock.releasedAt === undefined)) {
+    throw new Error("Lane run lock is malformed.");
+  }
+
+  return lock;
+}
+
+function toSerializableLaneRunQueueRecord(record: LaneRunQueueRecord): LaneRunQueueRecord {
+  return {
+    schemaVersion: record.schemaVersion,
+    id: record.id,
+    stableWorkItemId: record.stableWorkItemId,
+    workItemId: record.workItemId,
+    source: record.source,
+    laneId: record.laneId,
+    repositoryClassification: record.repositoryClassification,
+    status: record.status,
+    queuedAt: record.queuedAt,
+    updatedAt: record.updatedAt,
+    startsAgentExecution: record.startsAgentExecution,
+    metadata: { ...record.metadata },
+    publicDiagnostics: {
+      stableWorkItemId: record.publicDiagnostics.stableWorkItemId,
+      laneId: record.publicDiagnostics.laneId,
+      source: record.publicDiagnostics.source,
+      repositoryClassification: record.publicDiagnostics.repositoryClassification,
+      status: record.publicDiagnostics.status,
+    },
+  };
+}
+
+function toSerializableLaneRunLock(lock: LaneRunLock): LaneRunLock {
+  const base = {
+    schemaVersion: lock.schemaVersion,
+    stableWorkItemId: lock.stableWorkItemId,
+    queueRecordId: lock.queueRecordId,
+    laneRunId: lock.laneRunId,
+    laneId: lock.laneId,
+    source: lock.source,
+    repositoryClassification: lock.repositoryClassification,
+    status: lock.status,
+    active: lock.active,
+    claimedAt: lock.claimedAt,
+    claimedBy: lock.claimedBy,
+    startsAgentExecution: lock.startsAgentExecution,
+  } satisfies Omit<LaneRunLock, "releasedAt">;
+
+  if (lock.releasedAt === undefined) {
+    return base;
+  }
+
+  return {
+    ...base,
+    releasedAt: lock.releasedAt,
+  };
+}
+
 function isLaneJournal(value: unknown): value is LaneJournal {
   return (
     isRecord(value) &&
@@ -1332,6 +1929,44 @@ function isEvidenceRefs(value: unknown): value is LaneEvidenceRefs {
     Array.isArray(value.bundleRefs) &&
     value.bundleRefs.every(isNonEmptyString)
   );
+}
+
+function isLaneRunQueueDiagnostics(value: unknown): value is LaneRunQueueDiagnostics {
+  return (
+    isRecord(value) &&
+    hasExactKeys(value, [
+      "stableWorkItemId",
+      "laneId",
+      "source",
+      "repositoryClassification",
+      "status",
+    ]) &&
+    stableWorkItemIdPattern.test(String(value.stableWorkItemId)) &&
+    laneIdPattern.test(String(value.laneId)) &&
+    isNonEmptyString(value.source) &&
+    isLaneRepositoryClassification(value.repositoryClassification) &&
+    laneRunQueueStatuses.has(value.status)
+  );
+}
+
+function isLaneRepositoryClassification(value: unknown): value is LaneRepositoryClassification {
+  return value === "owner-controlled-dogfood" || value === "customer-repository";
+}
+
+function isStringMetadata(value: unknown): value is Record<string, string> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return Object.entries(value).every(([key, metadataValue]) => {
+    return (
+      /^[A-Za-z0-9][A-Za-z0-9._:-]{0,63}$/.test(key) &&
+      !/secret|token|password|credential/i.test(key) &&
+      typeof metadataValue === "string" &&
+      metadataValue.length > 0 &&
+      metadataValue.length <= 256
+    );
+  });
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
