@@ -277,11 +277,12 @@ export const preparedLocalLaneMarkerSchemaVersion = "ensen.local-lane-prepared.v
 
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
-const stableWorkItemIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/;
+const stableWorkItemIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
 const laneIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const branchNamePattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
+const laneRunMutationLockStaleMs = 5 * 60 * 1000;
 const isoDateTimePattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const laneRunStatuses = new Set<unknown>([
@@ -708,6 +709,14 @@ export async function enqueueLaneRun(
   });
 
   await withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+
+    if (existingLock?.active === true) {
+      throw new Error(
+        `Cannot enqueue lane run while stable work item is already claimed by active lane run ${existingLock.laneRunId}.`,
+      );
+    }
+
     await writeLaneRunQueueRecord(stateRoot, record);
   });
 
@@ -899,11 +908,49 @@ async function acquireLaneRunMutationLock(
         throw error;
       }
 
+      if (await recoverStaleLaneRunMutationLock(lockPath)) {
+        continue;
+      }
+
       await delay(20);
     }
   }
 
   throw new Error("Lane run queue record is currently being modified; retry the lane run mutation.");
+}
+
+async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
+  let lockStats: Stats;
+
+  try {
+    lockStats = await lstat(lockPath);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return true;
+    }
+
+    throw error;
+  }
+
+  if (!lockStats.isDirectory()) {
+    throw new Error("Lane run mutation lock path is malformed.");
+  }
+
+  if (Date.now() - lockStats.mtimeMs < laneRunMutationLockStaleMs) {
+    return false;
+  }
+
+  try {
+    await rm(lockPath, { recursive: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return true;
+    }
+
+    throw error;
+  }
+
+  return true;
 }
 
 function resolveLaneRunMutationLockPath(stateRoot: string, stableWorkItemId: string): string {
@@ -1041,7 +1088,7 @@ async function assertOpenedGenericStateFileSafeForAccess(
 
 function assertSafeStableWorkItemId(stableWorkItemId: string): void {
   if (!stableWorkItemIdPattern.test(stableWorkItemId)) {
-    throw new Error("Stable work item identifiers may only contain letters, numbers, dots, underscores, colons, and hyphens.");
+    throw new Error("Stable work item identifiers may only contain letters, numbers, dots, underscores, and hyphens.");
   }
 }
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -130,6 +130,48 @@ test("serializes concurrent claims so only one active lock is created", async ()
   }
 });
 
+test("rejects enqueue while an active lock exists for the same work item", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110-a",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    assert.equal(claim.ok, true);
+
+    await assert.rejects(
+      () =>
+        enqueueLaneRun(stateRoot, {
+          stableWorkItemId: "github-issue-110",
+          workItemId: "issue-110-b",
+          source: "github-issue",
+          laneId: "owner-dogfood",
+          repositoryClassification: "owner-controlled-dogfood",
+          queuedAt: "2026-05-21T05:01:30.000Z",
+        }),
+      /already claimed by active lane run lane-run-110-a/,
+    );
+
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+    assert.equal(durableQueueRecord.workItemId, "issue-110-a");
+    assert.equal(durableQueueRecord.status, "queued");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("distinguishes completed locks from active locks and allows a later claim", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
@@ -234,6 +276,34 @@ test("rejects attempts to rewrite a terminal lock", async () => {
   }
 });
 
+test("recovers a stale queue mutation lock before enqueueing", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    await mkdir(mutationLockPath, { recursive: true });
+
+    const staleTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
+
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    assert.equal(queued.status, "queued");
+
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+    assert.equal(durableQueueRecord.stableWorkItemId, "github-issue-110");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("fails closed when durable lock input is corrupted", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
@@ -274,6 +344,27 @@ test("fails closed when durable lock input is corrupted", async () => {
           claimedAt: "2026-05-21T05:01:30.000Z",
         }),
       /Lane run lock is malformed/,
+    );
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("rejects stable work item identifiers with filename-unsafe colons", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await assert.rejects(
+      () =>
+        enqueueLaneRun(stateRoot, {
+          stableWorkItemId: "github:issue-110",
+          workItemId: "issue-110",
+          source: "github-issue",
+          laneId: "owner-dogfood",
+          repositoryClassification: "owner-controlled-dogfood",
+          queuedAt,
+        }),
+      /Stable work item identifiers may only contain letters, numbers, dots, underscores, and hyphens/,
     );
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
