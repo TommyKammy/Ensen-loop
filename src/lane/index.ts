@@ -294,6 +294,7 @@ const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const laneRunMutationLockStaleMs = 5 * 60 * 1000;
 const laneRunMutationLockHeartbeatMs = 60 * 1000;
 const laneRunMaxCompletionDurationMs = 7 * 24 * 60 * 60 * 1000;
+const laneRunCompletionClockSkewMs = 5 * 60 * 1000;
 const laneRunMutationLockOwnerTokenPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const windowsReservedFilenameStems = new Set([
   "con",
@@ -1037,7 +1038,11 @@ function assertLaneRunCompletionTimestamp(claimedAt: string, completedAt: string
   const claimedAtMs = Date.parse(claimedAt);
   const completedAtMs = Date.parse(completedAt);
 
-  if (completedAtMs < claimedAtMs || completedAtMs - claimedAtMs > laneRunMaxCompletionDurationMs) {
+  if (
+    completedAtMs < claimedAtMs ||
+    completedAtMs - claimedAtMs > laneRunMaxCompletionDurationMs ||
+    completedAtMs - Date.now() > laneRunCompletionClockSkewMs
+  ) {
     throw new Error("Lane run lock completion timestamp must stay within the active claim window.");
   }
 }
@@ -1065,6 +1070,27 @@ async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolea
 
   // The lock directory heartbeat is the lock-specific liveness signal; PIDs can be reused
   // and malformed owner metadata must not make a stale lock unrecoverable.
+  await delay(20);
+
+  const refreshedStats = await lstat(lockPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!refreshedStats) {
+    return true;
+  }
+
+  if (
+    !refreshedStats.isDirectory() ||
+    !sameFileStats(lockStats, refreshedStats) ||
+    Date.now() - refreshedStats.mtimeMs < laneRunMutationLockStaleMs
+  ) {
+    return false;
+  }
 
   try {
     await rm(lockPath, { recursive: true });

@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 
 import {
   claimQueuedLaneRun,
@@ -375,6 +376,49 @@ test("rejects completion timestamps outside the active claim window", async () =
   }
 });
 
+test("rejects completion timestamps beyond the local clock tolerance", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt: "2099-05-21T05:01:00.000Z",
+    });
+
+    assert.equal(claim.ok, true);
+
+    await assert.rejects(
+      () =>
+        completeLaneRunLock(stateRoot, {
+          stableWorkItemId: "github-issue-110",
+          laneRunId: claim.lock.laneRunId,
+          completedAt: "2099-05-21T05:02:00.000Z",
+          terminalStatus: "completed",
+        }),
+      /completion timestamp must stay within the active claim window/,
+    );
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(durableLock.status, "active");
+    assert.equal(durableQueueRecord.status, "queued");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("keeps committed queue state when directory sync fails after atomic rename", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
   const queueDirectory = path.join(stateRoot, "lane-run-queue");
@@ -451,6 +495,40 @@ test("does not reclaim a fresh queue mutation lock", async () => {
         }),
       /currently being modified/,
     );
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("does not reclaim a stale-looking mutation lock that refreshes during recovery", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    await mkdir(mutationLockPath, { recursive: true });
+
+    const staleTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
+
+    const refresh = delay(5).then(async () => {
+      const refreshedAt = new Date();
+      await utimes(mutationLockPath, refreshedAt, refreshedAt);
+    });
+
+    await assert.rejects(
+      () =>
+        enqueueLaneRun(stateRoot, {
+          stableWorkItemId: "github-issue-110",
+          workItemId: "issue-110",
+          source: "github-issue",
+          laneId: "owner-dogfood",
+          repositoryClassification: "owner-controlled-dogfood",
+          queuedAt,
+        }),
+      /currently being modified/,
+    );
+
+    await refresh;
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }
