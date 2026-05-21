@@ -3,6 +3,7 @@ import type { Stats } from "node:fs";
 import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 
 import type { LaneAuditRefs } from "../audit/index.js";
 import {
@@ -706,7 +707,9 @@ export async function enqueueLaneRun(
     },
   });
 
-  await writeLaneRunQueueRecord(stateRoot, record);
+  await withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    await writeLaneRunQueueRecord(stateRoot, record);
+  });
 
   return record;
 }
@@ -736,47 +739,49 @@ export async function claimQueuedLaneRun(
     throw new Error("Lane run claim input is malformed.");
   }
 
-  const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+  return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
 
-  if (queueRecord.status !== "queued") {
-    throw new Error(`Lane run queue record is not claimable: ${queueRecord.status}.`);
-  }
+    if (queueRecord.status !== "queued") {
+      throw new Error(`Lane run queue record is not claimable: ${queueRecord.status}.`);
+    }
 
-  const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
 
-  if (existingLock?.active === true) {
-    const reason = `already claimed by active lane run ${existingLock.laneRunId}`;
+    if (existingLock?.active === true) {
+      const reason = `already claimed by active lane run ${existingLock.laneRunId}`;
+
+      return {
+        ok: false,
+        reason,
+        lock: existingLock,
+        publicDiagnostics: createLaneRunLockDiagnostics(existingLock, reason),
+      };
+    }
+
+    const lock = toSerializableLaneRunLock({
+      schemaVersion: "ensen.lane-run-lock.v1",
+      stableWorkItemId: queueRecord.stableWorkItemId,
+      queueRecordId: queueRecord.id,
+      laneRunId: input.laneRunId,
+      laneId: queueRecord.laneId,
+      source: queueRecord.source,
+      repositoryClassification: queueRecord.repositoryClassification,
+      status: "active",
+      active: true,
+      claimedAt: input.claimedAt,
+      claimedBy: input.claimedBy,
+      startsAgentExecution: false,
+    });
+
+    await writeLaneRunLock(stateRoot, lock);
 
     return {
-      ok: false,
-      reason,
-      lock: existingLock,
-      publicDiagnostics: createLaneRunLockDiagnostics(existingLock, reason),
+      ok: true,
+      lock,
+      publicDiagnostics: createLaneRunLockDiagnostics(lock, "claimed"),
     };
-  }
-
-  const lock = toSerializableLaneRunLock({
-    schemaVersion: "ensen.lane-run-lock.v1",
-    stableWorkItemId: queueRecord.stableWorkItemId,
-    queueRecordId: queueRecord.id,
-    laneRunId: input.laneRunId,
-    laneId: queueRecord.laneId,
-    source: queueRecord.source,
-    repositoryClassification: queueRecord.repositoryClassification,
-    status: "active",
-    active: true,
-    claimedAt: input.claimedAt,
-    claimedBy: input.claimedBy,
-    startsAgentExecution: false,
   });
-
-  await writeLaneRunLock(stateRoot, lock);
-
-  return {
-    ok: true,
-    lock,
-    publicDiagnostics: createLaneRunLockDiagnostics(lock, "claimed"),
-  };
 }
 
 export async function readLaneRunLock(stateRoot: string, stableWorkItemId: string): Promise<LaneRunLock> {
@@ -800,38 +805,120 @@ export async function completeLaneRunLock(
   if (
     !isLaneRunId(input.laneRunId) ||
     !isIsoDateTime(input.completedAt) ||
-    !laneRunLockStatuses.has(input.terminalStatus)
+    !laneRunLockStatuses.has(input.terminalStatus) ||
+    String(input.terminalStatus) === "active"
   ) {
     throw new Error("Lane run lock completion input is malformed.");
   }
 
-  const existingLock = await readLaneRunLock(stateRoot, input.stableWorkItemId);
+  return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    const existingLock = await readLaneRunLock(stateRoot, input.stableWorkItemId);
 
-  if (existingLock.laneRunId !== input.laneRunId) {
-    throw new Error("Lane run lock completion does not match the active lane run.");
+    if (existingLock.laneRunId !== input.laneRunId) {
+      throw new Error("Lane run lock completion does not match the active lane run.");
+    }
+
+    if (existingLock.status !== "active" || existingLock.active !== true) {
+      throw new Error(`Lane run lock is already terminal: ${existingLock.status}.`);
+    }
+
+    const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+    const completedLock = toSerializableLaneRunLock({
+      ...existingLock,
+      status: input.terminalStatus,
+      active: false,
+      releasedAt: input.completedAt,
+    });
+    const completedQueueRecord = toSerializableLaneRunQueueRecord({
+      ...queueRecord,
+      status: input.terminalStatus,
+      updatedAt: input.completedAt,
+      publicDiagnostics: {
+        ...queueRecord.publicDiagnostics,
+        status: input.terminalStatus,
+      },
+    });
+
+    await persistCompletedLaneRunState(stateRoot, queueRecord, completedQueueRecord, completedLock);
+
+    return completedLock;
+  });
+}
+
+async function persistCompletedLaneRunState(
+  stateRoot: string,
+  previousQueueRecord: LaneRunQueueRecord,
+  completedQueueRecord: LaneRunQueueRecord,
+  completedLock: LaneRunLock,
+): Promise<void> {
+  await writeLaneRunQueueRecord(stateRoot, completedQueueRecord);
+
+  try {
+    await writeLaneRunLock(stateRoot, completedLock);
+  } catch (error) {
+    await writeLaneRunQueueRecord(stateRoot, previousQueueRecord);
+    throw error;
+  }
+}
+
+async function withLaneRunMutationLock<T>(
+  stateRoot: string,
+  stableWorkItemId: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const release = await acquireLaneRunMutationLock(stateRoot, stableWorkItemId);
+
+  try {
+    return await operation();
+  } finally {
+    await release();
+  }
+}
+
+async function acquireLaneRunMutationLock(
+  stateRoot: string,
+  stableWorkItemId: string,
+): Promise<() => Promise<void>> {
+  const lockPath = resolveLaneRunMutationLockPath(stateRoot, stableWorkItemId);
+  const lockRoot = path.dirname(lockPath);
+
+  await mkdir(lockRoot, { recursive: true });
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  await assertExistingPathSafe(realRoot, lockRoot, "directory");
+
+  for (let attempt = 0; attempt < 25; attempt += 1) {
+    try {
+      await mkdir(lockPath, { mode: 0o700 });
+      await assertExistingPathSafe(realRoot, lockPath, "directory");
+
+      return async () => {
+        await rm(lockPath, { recursive: true, force: true });
+      };
+    } catch (error) {
+      if (!isNodeError(error) || error.code !== "EEXIST") {
+        throw error;
+      }
+
+      await delay(20);
+    }
   }
 
-  const completedLock = toSerializableLaneRunLock({
-    ...existingLock,
-    status: input.terminalStatus,
-    active: false,
-    releasedAt: input.completedAt,
-  });
+  throw new Error("Lane run queue record is currently being modified; retry the lane run mutation.");
+}
 
-  await writeLaneRunLock(stateRoot, completedLock);
+function resolveLaneRunMutationLockPath(stateRoot: string, stableWorkItemId: string): string {
+  assertSafeStableWorkItemId(stableWorkItemId);
 
-  const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
-  await writeLaneRunQueueRecord(stateRoot, {
-    ...queueRecord,
-    status: input.terminalStatus,
-    updatedAt: input.completedAt,
-    publicDiagnostics: {
-      ...queueRecord.publicDiagnostics,
-      status: input.terminalStatus,
-    },
-  });
+  const resolvedRoot = path.resolve(stateRoot);
+  const lockRoot = path.join(resolvedRoot, "lane-run-mutation-locks");
+  const lockPath = path.join(lockRoot, `${stableWorkItemId}.lock`);
+  const relativePath = path.relative(resolvedRoot, lockPath);
 
-  return completedLock;
+  if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    throw new Error("Lane run mutation lock paths must stay inside the configured state root.");
+  }
+
+  return lockPath;
 }
 
 async function readOptionalLaneRunLock(
@@ -1833,7 +1920,11 @@ function parseLaneRunLock(value: unknown): LaneRunLock {
 
   const lock = value as unknown as LaneRunLock;
 
-  if ((lock.status === "active") !== lock.active || (lock.status !== "active" && lock.releasedAt === undefined)) {
+  if (
+    (lock.status === "active") !== lock.active ||
+    (lock.status === "active" && lock.releasedAt !== undefined) ||
+    (lock.status !== "active" && lock.releasedAt === undefined)
+  ) {
     throw new Error("Lane run lock is malformed.");
   }
 
