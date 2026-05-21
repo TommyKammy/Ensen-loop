@@ -277,6 +277,32 @@ test("rejects attempts to rewrite a terminal lock", async () => {
   }
 });
 
+test("fails closed when the queue directory cannot be synced after atomic rename", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+  const queueDirectory = path.join(stateRoot, "lane-run-queue");
+
+  try {
+    await mkdir(queueDirectory, { recursive: true });
+    await chmod(queueDirectory, 0o300);
+
+    await assert.rejects(
+      () =>
+        enqueueLaneRun(stateRoot, {
+          stableWorkItemId: "github-issue-110",
+          workItemId: "issue-110",
+          source: "github-issue",
+          laneId: "owner-dogfood",
+          repositoryClassification: "owner-controlled-dogfood",
+          queuedAt,
+        }),
+      (error: unknown) => error instanceof Error && "code" in error && error.code === "EACCES",
+    );
+  } finally {
+    await chmod(queueDirectory, 0o700).catch(() => undefined);
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("recovers a stale queue mutation lock before enqueueing", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 

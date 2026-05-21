@@ -1255,9 +1255,32 @@ async function writeJsonStateFile(
   try {
     await assertGenericStatePathSafeForWrite(stateRoot, statePath);
     await rename(temporaryPath, statePath);
+    await syncStateDirectory(realRoot, stateDirectory);
   } catch (error) {
     await rm(temporaryPath, { force: true });
     throw error;
+  }
+}
+
+async function syncStateDirectory(realRoot: string, stateDirectory: string): Promise<void> {
+  await assertExistingPathSafe(realRoot, stateDirectory, "directory");
+
+  const directory = await open(
+    stateDirectory,
+    constants.O_RDONLY | directoryFlag() | noFollowFlag() | nonBlockingFlag(),
+  );
+
+  try {
+    const stats = await directory.stat();
+
+    if (!stats.isDirectory()) {
+      throw new Error("Lane run durable state directory path must be a real directory.");
+    }
+
+    await assertExistingPathSafe(realRoot, stateDirectory, "directory");
+    await directory.sync();
+  } finally {
+    await directory.close();
   }
 }
 
@@ -1953,6 +1976,10 @@ function noFollowFlag(): number {
 
 function nonBlockingFlag(): number {
   return typeof constants.O_NONBLOCK === "number" ? constants.O_NONBLOCK : 0;
+}
+
+function directoryFlag(): number {
+  return typeof constants.O_DIRECTORY === "number" ? constants.O_DIRECTORY : 0;
 }
 
 async function assertOpenedLaneRunStateFileSafeForAccess(
