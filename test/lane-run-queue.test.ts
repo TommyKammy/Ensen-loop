@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -305,7 +305,7 @@ test("recovers a stale queue mutation lock before enqueueing", async () => {
   }
 });
 
-test("does not recover a stale queue mutation lock while its owner process is alive", async () => {
+test("recovers a stale queue mutation lock even when owner pid is currently alive", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
   try {
@@ -327,20 +327,44 @@ test("does not recover a stale queue mutation lock while its owner process is al
     await utimes(ownerPath, staleTimestamp, staleTimestamp);
     await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
 
-    await assert.rejects(
-      () =>
-        enqueueLaneRun(stateRoot, {
-          stableWorkItemId: "github-issue-110",
-          workItemId: "issue-110",
-          source: "github-issue",
-          laneId: "owner-dogfood",
-          repositoryClassification: "owner-controlled-dogfood",
-          queuedAt,
-        }),
-      /currently being modified/,
-    );
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
 
-    assert.match(await readFile(ownerPath, "utf8"), /active-owner/);
+    assert.equal(queued.status, "queued");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("recovers a stale queue mutation lock when owner metadata is malformed", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    const ownerPath = path.join(mutationLockPath, "owner.json");
+    await mkdir(mutationLockPath, { recursive: true });
+    await writeFile(ownerPath, "{\"schemaVersion\":\"ensen.lane-run-mutation-lock-owner.v1\"", "utf8");
+
+    const staleTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(ownerPath, staleTimestamp, staleTimestamp);
+    await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
+
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    assert.equal(queued.status, "queued");
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }

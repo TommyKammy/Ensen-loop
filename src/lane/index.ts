@@ -877,7 +877,7 @@ export async function completeLaneRunLock(
       },
     });
 
-    await persistCompletedLaneRunState(stateRoot, queueRecord, completedQueueRecord, completedLock);
+    await persistCompletedLaneRunState(stateRoot, existingLock, completedLock, completedQueueRecord);
 
     return completedLock;
   });
@@ -885,16 +885,21 @@ export async function completeLaneRunLock(
 
 async function persistCompletedLaneRunState(
   stateRoot: string,
-  previousQueueRecord: LaneRunQueueRecord,
-  completedQueueRecord: LaneRunQueueRecord,
+  previousLock: LaneRunLock,
   completedLock: LaneRunLock,
+  completedQueueRecord: LaneRunQueueRecord,
 ): Promise<void> {
-  await writeLaneRunQueueRecord(stateRoot, completedQueueRecord);
+  await writeLaneRunLock(stateRoot, completedLock);
 
   try {
-    await writeLaneRunLock(stateRoot, completedLock);
+    await writeLaneRunQueueRecord(stateRoot, completedQueueRecord);
   } catch (error) {
-    await writeLaneRunQueueRecord(stateRoot, previousQueueRecord);
+    try {
+      await writeLaneRunLock(stateRoot, previousLock);
+    } catch (rollbackError) {
+      throw new AggregateError([error, rollbackError], "Lane run completion failed and lock rollback failed.");
+    }
+
     throw error;
   }
 }
@@ -947,7 +952,7 @@ async function acquireLaneRunMutationLock(
         throw error;
       }
 
-      const recoveredStaleLock = await recoverStaleLaneRunMutationLock(realRoot, lockPath);
+      const recoveredStaleLock = await recoverStaleLaneRunMutationLock(lockPath);
 
       if (recoveredStaleLock) {
         continue;
@@ -996,7 +1001,7 @@ async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWork
   }
 }
 
-async function recoverStaleLaneRunMutationLock(realRoot: string, lockPath: string): Promise<boolean> {
+async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
   let lockStats: Stats;
 
   try {
@@ -1017,12 +1022,8 @@ async function recoverStaleLaneRunMutationLock(realRoot: string, lockPath: strin
     return false;
   }
 
-  // A stale timestamp alone is not enough to reclaim a lock; live owners remain authoritative.
-  const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath);
-
-  if (owner && isProcessAlive(owner.pid)) {
-    return false;
-  }
+  // The lock directory heartbeat is the lock-specific liveness signal; PIDs can be reused
+  // and malformed owner metadata must not make a stale lock unrecoverable.
 
   try {
     await rm(lockPath, { recursive: true });
@@ -1270,23 +1271,6 @@ function isSafeStableWorkItemId(stableWorkItemId: string): boolean {
   }
 
   return !windowsReservedFilenameStems.has(stableWorkItemId.split(".")[0]);
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    if (isNodeError(error) && error.code === "ESRCH") {
-      return false;
-    }
-
-    return true;
-  }
 }
 
 function assertSafeLaneQueueMetadata(input: EnqueueLaneRunInput): void {
