@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -291,6 +291,7 @@ const branchNamePattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const laneRunMutationLockStaleMs = 5 * 60 * 1000;
+const laneRunMutationLockHeartbeatMs = 60 * 1000;
 const laneRunMutationLockOwnerFilename = "owner.json";
 const windowsReservedFilenameStems = new Set([
   "con",
@@ -743,6 +744,7 @@ export async function enqueueLaneRun(
   });
 
   await withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    // Keep rediscovery from overwriting queue state while the same work item is actively claimed.
     await assertNoActiveLaneRunLockForEnqueue(stateRoot, input.stableWorkItemId);
     await writeLaneRunQueueRecord(stateRoot, record);
   });
@@ -933,8 +935,10 @@ async function acquireLaneRunMutationLock(
       await mkdir(lockPath, { mode: 0o700 });
       await assertExistingPathSafe(realRoot, lockPath, "directory");
       await writeLaneRunMutationLockOwner(realRoot, lockPath, owner);
+      const stopHeartbeat = startLaneRunMutationLockHeartbeat(lockPath);
 
       return async () => {
+        stopHeartbeat();
         await releaseLaneRunMutationLock(lockPath, owner.token);
       };
     } catch (error) {
@@ -954,6 +958,32 @@ async function acquireLaneRunMutationLock(
   }
 
   throw new Error("Lane run queue record is currently being modified; retry the lane run mutation.");
+}
+
+function startLaneRunMutationLockHeartbeat(lockPath: string): () => void {
+  const heartbeat = setInterval(() => {
+    void refreshLaneRunMutationLockHeartbeat(lockPath).catch(() => undefined);
+  }, laneRunMutationLockHeartbeatMs);
+
+  heartbeat.unref();
+
+  return () => {
+    clearInterval(heartbeat);
+  };
+}
+
+async function refreshLaneRunMutationLockHeartbeat(lockPath: string): Promise<void> {
+  const heartbeatAt = new Date();
+
+  try {
+    await utimes(lockPath, heartbeatAt, heartbeatAt);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWorkItemId: string): Promise<void> {
@@ -987,6 +1017,7 @@ async function recoverStaleLaneRunMutationLock(realRoot: string, lockPath: strin
     return false;
   }
 
+  // A stale timestamp alone is not enough to reclaim a lock; live owners remain authoritative.
   const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath);
 
   if (owner && isProcessAlive(owner.pid)) {
