@@ -536,6 +536,61 @@ test("keeps the active lock when queue completion cannot be persisted", async ()
   }
 });
 
+test("fails closed when a terminal lock is newer than the queued record", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const lockPath = resolveLaneRunLockPath(stateRoot, "github-issue-110");
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      JSON.stringify({
+        schemaVersion: "ensen.lane-run-lock.v1",
+        stableWorkItemId: "github-issue-110",
+        queueRecordId: queued.id,
+        laneRunId: "lane-run-110-a",
+        laneId: "owner-dogfood",
+        source: "github-issue",
+        repositoryClassification: "owner-controlled-dogfood",
+        status: "completed",
+        active: false,
+        claimedAt,
+        claimedBy: "local-supervisor",
+        releasedAt: completedAt,
+        startsAgentExecution: false,
+      }),
+      "utf8",
+    );
+
+    const duplicate = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-b",
+      claimedBy: "local-supervisor",
+      claimedAt: "2026-05-21T05:03:00.000Z",
+    });
+
+    assert.equal(duplicate.ok, false);
+    assert.match(duplicate.reason, /stale queued record for terminal lane run lane-run-110-a/);
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(durableLock.status, "completed");
+    assert.equal(durableQueueRecord.status, "queued");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("fails closed when durable lock input is corrupted", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 

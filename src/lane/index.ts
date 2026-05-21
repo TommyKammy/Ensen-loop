@@ -786,6 +786,17 @@ export async function claimQueuedLaneRun(
 
     const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
 
+    if (existingLock && isStaleQueueRecordForTerminalLock(queueRecord, existingLock)) {
+      const reason = `stale queued record for terminal lane run ${existingLock.laneRunId}`;
+
+      return {
+        ok: false,
+        reason,
+        lock: existingLock,
+        publicDiagnostics: createLaneRunLockDiagnostics(existingLock, reason),
+      };
+    }
+
     if (existingLock?.active === true) {
       const reason = `already claimed by active lane run ${existingLock.laneRunId}`;
 
@@ -1000,6 +1011,14 @@ async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWork
       `Cannot enqueue lane run while stable work item is already claimed by active lane run ${existingLock.laneRunId}.`,
     );
   }
+}
+
+function isStaleQueueRecordForTerminalLock(queueRecord: LaneRunQueueRecord, lock: LaneRunLock): boolean {
+  if (lock.status === "active" || lock.releasedAt === undefined || lock.queueRecordId !== queueRecord.id) {
+    return false;
+  }
+
+  return Date.parse(queueRecord.queuedAt) <= Date.parse(lock.releasedAt);
 }
 
 async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
