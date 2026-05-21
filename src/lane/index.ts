@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
-import { lstat, mkdir, open, realpath, rm } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { lstat, mkdir, open, realpath, rename, rm } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -111,6 +112,13 @@ export interface LaneRunLockDiagnostics {
   readonly lockStatus: LaneRunLockStatus;
   readonly laneRunId: string;
   readonly reason: string;
+}
+
+interface LaneRunMutationLockOwner {
+  readonly schemaVersion: "ensen.lane-run-mutation-lock-owner.v1";
+  readonly token: string;
+  readonly pid: number;
+  readonly acquiredAt: string;
 }
 
 export interface LaneRunQueueRecord {
@@ -277,12 +285,38 @@ export const preparedLocalLaneMarkerSchemaVersion = "ensen.local-lane-prepared.v
 
 const laneRunIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 const localLaneDirectoryNamePattern = /^[A-Za-z0-9._-]{1,128}$/;
-const stableWorkItemIdPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/;
+const stableWorkItemIdPattern = /^[a-z0-9][a-z0-9._-]{0,159}$/;
 const laneIdPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const branchNamePattern = /^[A-Za-z0-9][A-Za-z0-9._/-]{0,159}$/;
 const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const laneRunMutationLockStaleMs = 5 * 60 * 1000;
+const laneRunMutationLockOwnerFilename = "owner.json";
+const windowsReservedFilenameStems = new Set([
+  "con",
+  "prn",
+  "aux",
+  "nul",
+  "clock$",
+  "com1",
+  "com2",
+  "com3",
+  "com4",
+  "com5",
+  "com6",
+  "com7",
+  "com8",
+  "com9",
+  "lpt1",
+  "lpt2",
+  "lpt3",
+  "lpt4",
+  "lpt5",
+  "lpt6",
+  "lpt7",
+  "lpt8",
+  "lpt9",
+]);
 const isoDateTimePattern =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const laneRunStatuses = new Set<unknown>([
@@ -883,6 +917,12 @@ async function acquireLaneRunMutationLock(
 ): Promise<() => Promise<void>> {
   const lockPath = resolveLaneRunMutationLockPath(stateRoot, stableWorkItemId);
   const lockRoot = path.dirname(lockPath);
+  const owner: LaneRunMutationLockOwner = {
+    schemaVersion: "ensen.lane-run-mutation-lock-owner.v1",
+    token: randomUUID(),
+    pid: process.pid,
+    acquiredAt: new Date().toISOString(),
+  };
 
   await mkdir(lockRoot, { recursive: true });
   const realRoot = await resolveCanonicalStateRoot(stateRoot);
@@ -892,16 +932,18 @@ async function acquireLaneRunMutationLock(
     try {
       await mkdir(lockPath, { mode: 0o700 });
       await assertExistingPathSafe(realRoot, lockPath, "directory");
+      await writeLaneRunMutationLockOwner(realRoot, lockPath, owner);
 
       return async () => {
-        await rm(lockPath, { recursive: true, force: true });
+        await releaseLaneRunMutationLock(lockPath, owner.token);
       };
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") {
+        await rm(lockPath, { recursive: true, force: true });
         throw error;
       }
 
-      const recoveredStaleLock = await recoverStaleLaneRunMutationLock(lockPath);
+      const recoveredStaleLock = await recoverStaleLaneRunMutationLock(realRoot, lockPath);
 
       if (recoveredStaleLock) {
         continue;
@@ -924,7 +966,7 @@ async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWork
   }
 }
 
-async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
+async function recoverStaleLaneRunMutationLock(realRoot: string, lockPath: string): Promise<boolean> {
   let lockStats: Stats;
 
   try {
@@ -945,6 +987,12 @@ async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolea
     return false;
   }
 
+  const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath);
+
+  if (owner && isProcessAlive(owner.pid)) {
+    return false;
+  }
+
   try {
     await rm(lockPath, { recursive: true });
   } catch (error) {
@@ -956,6 +1004,74 @@ async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolea
   }
 
   return true;
+}
+
+async function writeLaneRunMutationLockOwner(
+  realRoot: string,
+  lockPath: string,
+  owner: LaneRunMutationLockOwner,
+): Promise<void> {
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename);
+  const ownerFile = await open(
+    ownerPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag() | nonBlockingFlag(),
+    0o600,
+  );
+
+  try {
+    await assertOpenedGenericStateFileSafeForAccess(realRoot, ownerPath, ownerFile);
+    await ownerFile.writeFile(`${JSON.stringify(owner, null, 2)}\n`, "utf8");
+  } finally {
+    await ownerFile.close();
+  }
+}
+
+async function readOptionalLaneRunMutationLockOwner(
+  realRoot: string,
+  lockPath: string,
+): Promise<LaneRunMutationLockOwner | undefined> {
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename);
+
+  let contents: string;
+  let file: FileHandle;
+
+  try {
+    file = await open(ownerPath, constants.O_RDONLY | noFollowFlag() | nonBlockingFlag());
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+
+  try {
+    await assertOpenedGenericStateFileSafeForAccess(realRoot, ownerPath, file);
+    contents = await file.readFile("utf8");
+  } finally {
+    await file.close();
+  }
+
+  return parseLaneRunMutationLockOwner(JSON.parse(contents) as unknown);
+}
+
+async function releaseLaneRunMutationLock(lockPath: string, token: string): Promise<void> {
+  const realRoot = await resolveCanonicalStateRoot(path.dirname(path.dirname(lockPath)));
+  const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath);
+
+  if (!owner || owner.token !== token) {
+    return;
+  }
+
+  try {
+    await rm(lockPath, { recursive: true });
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function resolveLaneRunMutationLockPath(stateRoot: string, stableWorkItemId: string): string {
@@ -1030,18 +1146,36 @@ async function writeJsonStateFile(
   await mkdir(path.dirname(statePath), { recursive: true });
   await assertGenericStatePathSafeForWrite(stateRoot, statePath);
 
+  const stateDirectory = path.dirname(statePath);
+  const temporaryPath = path.join(stateDirectory, `.${path.basename(statePath)}.${process.pid}.${randomUUID()}.tmp`);
   const file = await open(
-    statePath,
-    constants.O_RDWR | constants.O_CREAT | noFollowFlag() | nonBlockingFlag(),
+    temporaryPath,
+    constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag() | nonBlockingFlag(),
     0o600,
   );
+  let writeError: unknown;
 
   try {
-    await assertOpenedGenericStateFileSafeForAccess(realRoot, statePath, file);
-    await file.truncate(0);
+    await assertOpenedGenericStateFileSafeForAccess(realRoot, temporaryPath, file);
     await file.writeFile(`${JSON.stringify(value, null, 2)}\n`, "utf8");
+    await file.sync();
+  } catch (error) {
+    writeError = error;
   } finally {
     await file.close();
+  }
+
+  if (writeError) {
+    await rm(temporaryPath, { force: true });
+    throw writeError;
+  }
+
+  try {
+    await assertGenericStatePathSafeForWrite(stateRoot, statePath);
+    await rename(temporaryPath, statePath);
+  } catch (error) {
+    await rm(temporaryPath, { force: true });
+    throw error;
   }
 }
 
@@ -1092,8 +1226,35 @@ async function assertOpenedGenericStateFileSafeForAccess(
 }
 
 function assertSafeStableWorkItemId(stableWorkItemId: string): void {
+  if (!isSafeStableWorkItemId(stableWorkItemId)) {
+    throw new Error(
+      "Stable work item identifiers may only contain lowercase letters, numbers, dots, underscores, and hyphens, and must not use reserved filenames.",
+    );
+  }
+}
+
+function isSafeStableWorkItemId(stableWorkItemId: string): boolean {
   if (!stableWorkItemIdPattern.test(stableWorkItemId)) {
-    throw new Error("Stable work item identifiers may only contain letters, numbers, dots, underscores, and hyphens.");
+    return false;
+  }
+
+  return !windowsReservedFilenameStems.has(stableWorkItemId.split(".")[0]);
+}
+
+function isProcessAlive(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ESRCH") {
+      return false;
+    }
+
+    return true;
   }
 }
 
@@ -1885,7 +2046,7 @@ function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
     ]) ||
     value.schemaVersion !== "ensen.lane-run-queue.v1" ||
     !isNonEmptyString(value.id) ||
-    !stableWorkItemIdPattern.test(String(value.stableWorkItemId)) ||
+    !isSafeStableWorkItemId(String(value.stableWorkItemId)) ||
     !isNonEmptyString(value.workItemId) ||
     !isNonEmptyString(value.source) ||
     !laneIdPattern.test(String(value.laneId)) ||
@@ -1955,7 +2116,7 @@ function parseLaneRunLock(value: unknown): LaneRunLock {
     value.startsAgentExecution !== false ||
     !hasExactKeys(value, expectedKeys) ||
     value.schemaVersion !== "ensen.lane-run-lock.v1" ||
-    !stableWorkItemIdPattern.test(String(value.stableWorkItemId)) ||
+    !isSafeStableWorkItemId(String(value.stableWorkItemId)) ||
     !isNonEmptyString(value.queueRecordId) ||
     !isLaneRunId(value.laneRunId) ||
     !laneIdPattern.test(String(value.laneId)) ||
@@ -1981,6 +2142,21 @@ function parseLaneRunLock(value: unknown): LaneRunLock {
   }
 
   return lock;
+}
+
+function parseLaneRunMutationLockOwner(value: unknown): LaneRunMutationLockOwner {
+  if (
+    !isRecord(value) ||
+    !hasExactKeys(value, ["schemaVersion", "token", "pid", "acquiredAt"]) ||
+    value.schemaVersion !== "ensen.lane-run-mutation-lock-owner.v1" ||
+    !isNonEmptyString(value.token) ||
+    !Number.isSafeInteger(value.pid) ||
+    !isIsoDateTime(value.acquiredAt)
+  ) {
+    throw new Error("Lane run mutation lock owner is malformed.");
+  }
+
+  return value as unknown as LaneRunMutationLockOwner;
 }
 
 function toSerializableLaneRunQueueRecord(record: LaneRunQueueRecord): LaneRunQueueRecord {
@@ -2084,7 +2260,7 @@ function isLaneRunQueueDiagnostics(value: unknown): value is LaneRunQueueDiagnos
       "repositoryClassification",
       "status",
     ]) &&
-    stableWorkItemIdPattern.test(String(value.stableWorkItemId)) &&
+    isSafeStableWorkItemId(String(value.stableWorkItemId)) &&
     laneIdPattern.test(String(value.laneId)) &&
     isNonEmptyString(value.source) &&
     isLaneRepositoryClassification(value.repositoryClassification) &&
