@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
   readLaneRunLock,
   readLaneRunQueueRecord,
   resolveLaneRunLockPath,
+  resolveLaneRunQueueRecordPath,
 } from "../src/lane/index.js";
 
 const queuedAt = "2026-05-21T05:00:00.000Z";
@@ -299,6 +300,121 @@ test("recovers a stale queue mutation lock before enqueueing", async () => {
 
     const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
     assert.equal(durableQueueRecord.stableWorkItemId, "github-issue-110");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("recovers a stale queue mutation lock before claiming", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    await mkdir(mutationLockPath, { recursive: true });
+
+    const staleTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+
+    assert.equal(claim.ok, true);
+    assert.equal(claim.lock.status, "active");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("recovers a stale queue mutation lock before completing", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    await mkdir(mutationLockPath, { recursive: true });
+
+    const staleTimestamp = new Date(Date.now() - 10 * 60 * 1000);
+    await utimes(mutationLockPath, staleTimestamp, staleTimestamp);
+
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: claim.lock.laneRunId,
+      completedAt,
+      terminalStatus: "completed",
+    });
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    assert.equal(durableLock.status, "completed");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("keeps the active lock when queue completion cannot be persisted", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    const queuePath = resolveLaneRunQueueRecordPath(stateRoot, "github-issue-110");
+    await chmod(queuePath, 0o400);
+
+    await assert.rejects(() =>
+      completeLaneRunLock(stateRoot, {
+        stableWorkItemId: "github-issue-110",
+        laneRunId: claim.lock.laneRunId,
+        completedAt,
+        terminalStatus: "completed",
+      }),
+    );
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(durableLock.status, "active");
+    assert.equal(durableLock.active, true);
+    assert.equal(durableQueueRecord.status, "queued");
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }
