@@ -709,14 +709,7 @@ export async function enqueueLaneRun(
   });
 
   await withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
-    const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
-
-    if (existingLock?.active === true) {
-      throw new Error(
-        `Cannot enqueue lane run while stable work item is already claimed by active lane run ${existingLock.laneRunId}.`,
-      );
-    }
-
+    await assertNoActiveLaneRunLockForEnqueue(stateRoot, input.stableWorkItemId);
     await writeLaneRunQueueRecord(stateRoot, record);
   });
 
@@ -908,7 +901,9 @@ async function acquireLaneRunMutationLock(
         throw error;
       }
 
-      if (await recoverStaleLaneRunMutationLock(lockPath)) {
+      const recoveredStaleLock = await recoverStaleLaneRunMutationLock(lockPath);
+
+      if (recoveredStaleLock) {
         continue;
       }
 
@@ -917,6 +912,16 @@ async function acquireLaneRunMutationLock(
   }
 
   throw new Error("Lane run queue record is currently being modified; retry the lane run mutation.");
+}
+
+async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWorkItemId: string): Promise<void> {
+  const existingLock = await readOptionalLaneRunLock(stateRoot, stableWorkItemId);
+
+  if (existingLock?.active === true) {
+    throw new Error(
+      `Cannot enqueue lane run while stable work item is already claimed by active lane run ${existingLock.laneRunId}.`,
+    );
+  }
 }
 
 async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
