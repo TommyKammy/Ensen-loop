@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, utimes } from "node:fs/promises";
+import { lstat, mkdir, open, realpath, rename, rm, rmdir, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -292,7 +292,7 @@ const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const laneRunMutationLockStaleMs = 5 * 60 * 1000;
 const laneRunMutationLockHeartbeatMs = 60 * 1000;
-const laneRunMutationLockOwnerFilename = "owner.json";
+const laneRunMutationLockOwnerTokenPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const windowsReservedFilenameStems = new Set([
   "con",
   "prn",
@@ -940,11 +940,12 @@ async function acquireLaneRunMutationLock(
       await mkdir(lockPath, { mode: 0o700 });
       await assertExistingPathSafe(realRoot, lockPath, "directory");
       await writeLaneRunMutationLockOwner(realRoot, lockPath, owner);
+      const lockStats = await lstat(lockPath);
       const stopHeartbeat = startLaneRunMutationLockHeartbeat(lockPath);
 
       return async () => {
         stopHeartbeat();
-        await releaseLaneRunMutationLock(lockPath, owner.token);
+        await releaseLaneRunMutationLock(lockPath, owner.token, lockStats);
       };
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") {
@@ -1043,7 +1044,7 @@ async function writeLaneRunMutationLockOwner(
   lockPath: string,
   owner: LaneRunMutationLockOwner,
 ): Promise<void> {
-  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename);
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename(owner.token));
   const ownerFile = await open(
     ownerPath,
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag() | nonBlockingFlag(),
@@ -1061,8 +1062,9 @@ async function writeLaneRunMutationLockOwner(
 async function readOptionalLaneRunMutationLockOwner(
   realRoot: string,
   lockPath: string,
+  token: string,
 ): Promise<LaneRunMutationLockOwner | undefined> {
-  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename);
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename(token));
 
   let contents: string;
   let file: FileHandle;
@@ -1087,18 +1089,58 @@ async function readOptionalLaneRunMutationLockOwner(
   return parseLaneRunMutationLockOwner(JSON.parse(contents) as unknown);
 }
 
-async function releaseLaneRunMutationLock(lockPath: string, token: string): Promise<void> {
+async function releaseLaneRunMutationLock(
+  lockPath: string,
+  token: string,
+  acquiredStats: Stats,
+): Promise<void> {
   const realRoot = await resolveCanonicalStateRoot(path.dirname(path.dirname(lockPath)));
-  const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath);
+  const currentStats = await lstat(lockPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!currentStats || !currentStats.isDirectory() || !sameFileStats(acquiredStats, currentStats)) {
+    return;
+  }
+
+  const owner = await readOptionalLaneRunMutationLockOwner(realRoot, lockPath, token);
 
   if (!owner || owner.token !== token) {
     return;
   }
 
+  const latestStats = await lstat(lockPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!latestStats || !latestStats.isDirectory() || !sameFileStats(acquiredStats, latestStats)) {
+    return;
+  }
+
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename(token));
+
   try {
-    await rm(lockPath, { recursive: true });
+    await rm(ownerPath);
   } catch (error) {
     if (isNodeError(error) && error.code === "ENOENT") {
+      return;
+    }
+
+    throw error;
+  }
+
+  try {
+    await rmdir(lockPath);
+  } catch (error) {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) {
       return;
     }
 
@@ -1119,6 +1161,14 @@ function resolveLaneRunMutationLockPath(stateRoot: string, stableWorkItemId: str
   }
 
   return lockPath;
+}
+
+function laneRunMutationLockOwnerFilename(token: string): string {
+  if (!laneRunMutationLockOwnerTokenPattern.test(token)) {
+    throw new Error("Lane run mutation lock owner token is malformed.");
+  }
+
+  return `owner-${token}.json`;
 }
 
 async function readOptionalLaneRunLock(

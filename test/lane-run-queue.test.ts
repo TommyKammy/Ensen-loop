@@ -305,6 +305,30 @@ test("recovers a stale queue mutation lock before enqueueing", async () => {
   }
 });
 
+test("does not reclaim a fresh queue mutation lock", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const mutationLockPath = path.join(stateRoot, "lane-run-mutation-locks", "github-issue-110.lock");
+    await mkdir(mutationLockPath, { recursive: true });
+
+    await assert.rejects(
+      () =>
+        enqueueLaneRun(stateRoot, {
+          stableWorkItemId: "github-issue-110",
+          workItemId: "issue-110",
+          source: "github-issue",
+          laneId: "owner-dogfood",
+          repositoryClassification: "owner-controlled-dogfood",
+          queuedAt,
+        }),
+      /currently being modified/,
+    );
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("recovers a stale queue mutation lock even when owner pid is currently alive", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
