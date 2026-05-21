@@ -124,6 +124,7 @@ interface LaneRunMutationLockOwner {
 export interface LaneRunQueueRecord {
   readonly schemaVersion: "ensen.lane-run-queue.v1";
   readonly id: string;
+  readonly enqueueSequence: number;
   readonly stableWorkItemId: string;
   readonly workItemId: WorkItem["id"];
   readonly source: string;
@@ -292,6 +293,7 @@ const repositorySlugPattern = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const idempotencyIntentPattern = /^[A-Za-z0-9][A-Za-z0-9._:-]{11,159}$/;
 const laneRunMutationLockStaleMs = 5 * 60 * 1000;
 const laneRunMutationLockHeartbeatMs = 60 * 1000;
+const laneRunMaxCompletionDurationMs = 7 * 24 * 60 * 60 * 1000;
 const laneRunMutationLockOwnerTokenPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const windowsReservedFilenameStems = new Set([
   "con",
@@ -721,35 +723,37 @@ export async function enqueueLaneRun(
   assertSafeStableWorkItemId(input.stableWorkItemId);
   assertSafeLaneQueueMetadata(input);
 
-  const record = toSerializableLaneRunQueueRecord({
-    schemaVersion: "ensen.lane-run-queue.v1",
-    id: `queue-${input.stableWorkItemId}`,
-    stableWorkItemId: input.stableWorkItemId,
-    workItemId: input.workItemId,
-    source: input.source,
-    laneId: input.laneId,
-    repositoryClassification: input.repositoryClassification,
-    status: "queued",
-    queuedAt: input.queuedAt,
-    updatedAt: input.queuedAt,
-    startsAgentExecution: false,
-    metadata: input.metadata ?? {},
-    publicDiagnostics: {
-      stableWorkItemId: input.stableWorkItemId,
-      laneId: input.laneId,
-      source: input.source,
-      repositoryClassification: input.repositoryClassification,
-      status: "queued",
-    },
-  });
-
-  await withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+  return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
     // Keep rediscovery from overwriting queue state while the same work item is actively claimed.
     await assertNoActiveLaneRunLockForEnqueue(stateRoot, input.stableWorkItemId);
-    await writeLaneRunQueueRecord(stateRoot, record);
-  });
+    const enqueueSequence = await nextLaneRunQueueSequence(stateRoot, input.stableWorkItemId);
+    const record = toSerializableLaneRunQueueRecord({
+      schemaVersion: "ensen.lane-run-queue.v1",
+      id: `queue-${input.stableWorkItemId}-${enqueueSequence}`,
+      enqueueSequence,
+      stableWorkItemId: input.stableWorkItemId,
+      workItemId: input.workItemId,
+      source: input.source,
+      laneId: input.laneId,
+      repositoryClassification: input.repositoryClassification,
+      status: "queued",
+      queuedAt: input.queuedAt,
+      updatedAt: input.queuedAt,
+      startsAgentExecution: false,
+      metadata: input.metadata ?? {},
+      publicDiagnostics: {
+        stableWorkItemId: input.stableWorkItemId,
+        laneId: input.laneId,
+        source: input.source,
+        repositoryClassification: input.repositoryClassification,
+        status: "queued",
+      },
+    });
 
-  return record;
+    await writeLaneRunQueueRecord(stateRoot, record);
+
+    return record;
+  });
 }
 
 export async function readLaneRunQueueRecord(
@@ -870,6 +874,8 @@ export async function completeLaneRunLock(
     if (existingLock.status !== "active" || existingLock.active !== true) {
       throw new Error(`Lane run lock is already terminal: ${existingLock.status}.`);
     }
+
+    assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.completedAt);
 
     const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     const completedLock = toSerializableLaneRunLock({
@@ -1013,12 +1019,27 @@ async function assertNoActiveLaneRunLockForEnqueue(stateRoot: string, stableWork
   }
 }
 
+async function nextLaneRunQueueSequence(stateRoot: string, stableWorkItemId: string): Promise<number> {
+  const existingRecord = await readOptionalLaneRunQueueRecord(stateRoot, stableWorkItemId);
+
+  return existingRecord ? existingRecord.enqueueSequence + 1 : 1;
+}
+
 function isStaleQueueRecordForTerminalLock(queueRecord: LaneRunQueueRecord, lock: LaneRunLock): boolean {
   if (lock.status === "active" || lock.releasedAt === undefined || lock.queueRecordId !== queueRecord.id) {
     return false;
   }
 
-  return Date.parse(queueRecord.queuedAt) <= Date.parse(lock.releasedAt);
+  return true;
+}
+
+function assertLaneRunCompletionTimestamp(claimedAt: string, completedAt: string): void {
+  const claimedAtMs = Date.parse(claimedAt);
+  const completedAtMs = Date.parse(completedAt);
+
+  if (completedAtMs < claimedAtMs || completedAtMs - claimedAtMs > laneRunMaxCompletionDurationMs) {
+    throw new Error("Lane run lock completion timestamp must stay within the active claim window.");
+  }
 }
 
 async function recoverStaleLaneRunMutationLock(lockPath: string): Promise<boolean> {
@@ -1205,6 +1226,21 @@ async function readOptionalLaneRunLock(
   }
 }
 
+async function readOptionalLaneRunQueueRecord(
+  stateRoot: string,
+  stableWorkItemId: string,
+): Promise<LaneRunQueueRecord | undefined> {
+  try {
+    return await readLaneRunQueueRecord(stateRoot, stableWorkItemId);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+}
+
 async function writeLaneRunQueueRecord(stateRoot: string, record: LaneRunQueueRecord): Promise<string> {
   const validatedRecord = parseLaneRunQueueRecord(record);
   const queuePath = resolveLaneRunQueueRecordPath(stateRoot, validatedRecord.stableWorkItemId);
@@ -1274,10 +1310,17 @@ async function writeJsonStateFile(
   try {
     await assertGenericStatePathSafeForWrite(stateRoot, statePath);
     await rename(temporaryPath, statePath);
-    await syncStateDirectory(realRoot, stateDirectory);
   } catch (error) {
     await rm(temporaryPath, { force: true });
     throw error;
+  }
+
+  try {
+    await syncStateDirectory(realRoot, stateDirectory);
+  } catch {
+    // The rename already made the logical state update visible. Directory fsync
+    // is a best-effort durability barrier and must not be reported as a failed
+    // write that callers might roll back into mixed queue/lock state.
   }
 }
 
@@ -2143,6 +2186,7 @@ function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
     !hasExactKeys(value, [
       "schemaVersion",
       "id",
+      "enqueueSequence",
       "stableWorkItemId",
       "workItemId",
       "source",
@@ -2157,6 +2201,8 @@ function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
     ]) ||
     value.schemaVersion !== "ensen.lane-run-queue.v1" ||
     !isNonEmptyString(value.id) ||
+    !Number.isSafeInteger(value.enqueueSequence) ||
+    Number(value.enqueueSequence) < 1 ||
     !isSafeStableWorkItemId(String(value.stableWorkItemId)) ||
     !isNonEmptyString(value.workItemId) ||
     !isNonEmptyString(value.source) ||
@@ -2274,6 +2320,7 @@ function toSerializableLaneRunQueueRecord(record: LaneRunQueueRecord): LaneRunQu
   return {
     schemaVersion: record.schemaVersion,
     id: record.id,
+    enqueueSequence: record.enqueueSequence,
     stableWorkItemId: record.stableWorkItemId,
     workItemId: record.workItemId,
     source: record.source,

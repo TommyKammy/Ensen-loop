@@ -35,6 +35,8 @@ test("queues an issue work item and claims it exactly once while the lock is act
     });
 
     assert.equal(queued.status, "queued");
+    assert.equal(queued.id, "queue-github-issue-110-1");
+    assert.equal(queued.enqueueSequence, 1);
     assert.equal(queued.startsAgentExecution, false);
     assert.deepEqual(queued.publicDiagnostics, {
       stableWorkItemId: "github-issue-110",
@@ -212,6 +214,8 @@ test("distinguishes completed locks from active locks and allows a later claim",
       queuedAt: "2026-05-21T05:02:30.000Z",
     });
     assert.equal(rediscovered.status, "queued");
+    assert.equal(rediscovered.id, "queue-github-issue-110-2");
+    assert.equal(rediscovered.enqueueSequence, 2);
 
     const secondClaim = await claimQueuedLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-110",
@@ -223,6 +227,56 @@ test("distinguishes completed locks from active locks and allows a later claim",
     assert.equal(secondClaim.ok, true);
     assert.equal(secondClaim.lock.status, "active");
     assert.equal(secondClaim.lock.laneRunId, "lane-run-110-b");
+    assert.equal(secondClaim.lock.queueRecordId, rediscovered.id);
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("uses internal enqueue sequence instead of source timestamps for stale terminal locks", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const firstClaim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: firstClaim.lock.laneRunId,
+      completedAt,
+      terminalStatus: "completed",
+    });
+
+    const rediscovered = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-21T04:59:00.000Z",
+    });
+    const secondClaim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-b",
+      claimedBy: "local-supervisor",
+      claimedAt: "2026-05-21T05:03:00.000Z",
+    });
+
+    assert.equal(rediscovered.enqueueSequence, 2);
+    assert.equal(secondClaim.ok, true);
+    assert.equal(secondClaim.lock.queueRecordId, rediscovered.id);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }
@@ -277,7 +331,51 @@ test("rejects attempts to rewrite a terminal lock", async () => {
   }
 });
 
-test("fails closed when the queue directory cannot be synced after atomic rename", async () => {
+test("rejects completion timestamps outside the active claim window", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: "lane-run-110-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+
+    for (const invalidCompletedAt of ["2026-05-21T05:00:59.999Z", "2026-05-29T05:01:00.001Z"]) {
+      await assert.rejects(
+        () =>
+          completeLaneRunLock(stateRoot, {
+            stableWorkItemId: "github-issue-110",
+            laneRunId: claim.lock.laneRunId,
+            completedAt: invalidCompletedAt,
+            terminalStatus: "completed",
+          }),
+        /completion timestamp must stay within the active claim window/,
+      );
+    }
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(durableLock.status, "active");
+    assert.equal(durableLock.active, true);
+    assert.equal(durableQueueRecord.status, "queued");
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
+test("keeps committed queue state when directory sync fails after atomic rename", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
   const queueDirectory = path.join(stateRoot, "lane-run-queue");
 
@@ -285,18 +383,21 @@ test("fails closed when the queue directory cannot be synced after atomic rename
     await mkdir(queueDirectory, { recursive: true });
     await chmod(queueDirectory, 0o300);
 
-    await assert.rejects(
-      () =>
-        enqueueLaneRun(stateRoot, {
-          stableWorkItemId: "github-issue-110",
-          workItemId: "issue-110",
-          source: "github-issue",
-          laneId: "owner-dogfood",
-          repositoryClassification: "owner-controlled-dogfood",
-          queuedAt,
-        }),
-      (error: unknown) => error instanceof Error && "code" in error && error.code === "EACCES",
-    );
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    await chmod(queueDirectory, 0o700);
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(queued.status, "queued");
+    assert.equal(durableQueueRecord.id, queued.id);
+    assert.equal(durableQueueRecord.enqueueSequence, 1);
   } finally {
     await chmod(queueDirectory, 0o700).catch(() => undefined);
     await rm(stateRoot, { recursive: true, force: true });
@@ -595,7 +696,7 @@ test("fails closed when durable lock input is corrupted", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
   try {
-    await enqueueLaneRun(stateRoot, {
+    const queued = await enqueueLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-110",
       workItemId: "issue-110",
       source: "github-issue",
@@ -616,7 +717,7 @@ test("fails closed when durable lock input is corrupted", async () => {
         active: true,
         claimedAt,
         claimedBy: "local-supervisor",
-        queueRecordId: "queue-github-issue-110",
+        queueRecordId: queued.id,
         startsAgentExecution: true,
       }),
       "utf8",
@@ -685,7 +786,7 @@ test("fails closed when an active lock already has a release timestamp", async (
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
   try {
-    await enqueueLaneRun(stateRoot, {
+    const queued = await enqueueLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-110",
       workItemId: "issue-110",
       source: "github-issue",
@@ -710,7 +811,7 @@ test("fails closed when an active lock already has a release timestamp", async (
         claimedAt,
         claimedBy: "local-supervisor",
         releasedAt: completedAt,
-        queueRecordId: "queue-github-issue-110",
+        queueRecordId: queued.id,
         startsAgentExecution: false,
       }),
       "utf8",
