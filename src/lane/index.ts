@@ -1500,6 +1500,9 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
   const resolvedRoot = path.resolve(stateRoot);
   const realRoot = await resolveCanonicalStateRoot(stateRoot);
   const queueRoot = path.join(resolvedRoot, "lane-run-queue");
+
+  await assertExistingPathSafe(realRoot, queueRoot, "directory");
+
   const entries = await readdir(queueRoot, { withFileTypes: true }).catch((error: unknown) => {
     if (isNodeError(error) && error.code === "ENOENT") {
       return [];
@@ -1509,17 +1512,19 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
   });
   const records: LaneRunQueueRecord[] = [];
 
-  await assertExistingPathSafe(realRoot, queueRoot, "directory");
-
   for (const entry of entries) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+    if (!entry.name.endsWith(".json")) {
       continue;
+    }
+
+    if (!entry.isFile()) {
+      throw new Error("Lane run queue entry is malformed.");
     }
 
     const stableWorkItemId = entry.name.slice(0, -".json".length);
 
     if (!isSafeStableWorkItemId(stableWorkItemId)) {
-      continue;
+      throw new Error("Lane run queue entry is malformed.");
     }
 
     records.push(await readLaneRunQueueRecord(stateRoot, stableWorkItemId));
@@ -1744,9 +1749,19 @@ function createMalformedLaneRunExplanation(
 }
 
 function isMalformedLaneRunStateError(error: unknown): boolean {
+  if (error instanceof SyntaxError) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
   return (
-    error instanceof SyntaxError ||
-    (error instanceof Error && /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message))
+    /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message) ||
+    /^Configured state root must (?:exist|be a real directory)/.test(error.message) ||
+    /^Lane run state (?:paths|directory path|file path) must /.test(error.message) ||
+    /^Lane run (?:durable )?state file (?:path must|changed during access)/.test(error.message)
   );
 }
 

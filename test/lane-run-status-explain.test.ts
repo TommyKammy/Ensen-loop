@@ -194,6 +194,61 @@ test("syntactically invalid queue JSON is reported as malformed status and expla
   });
 });
 
+test("unsafe queue filenames are reported as malformed status and explanation", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queueRoot = path.join(stateRoot, "lane-run-queue");
+    await mkdir(queueRoot, { recursive: true });
+    await writeFile(path.join(queueRoot, "Github-Issue-111.json"), "{}\n", {
+      encoding: "utf8",
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot);
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.queue.length, 0);
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
+test("non-regular queue JSON entries are reported as malformed status and explanation", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queueRoot = path.join(stateRoot, "lane-run-queue");
+    await mkdir(path.join(queueRoot, "github-issue-111.json"), { recursive: true });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot);
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.queue.length, 0);
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
+test("queue filesystem shape errors are reported as malformed status and explanation", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await writeFile(path.join(stateRoot, "lane-run-queue"), "not a directory\n", {
+      encoding: "utf8",
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot);
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.queue.length, 0);
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
 test("explain without issue prefers blocked queue items over runnable work", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
