@@ -1109,6 +1109,10 @@ export async function completeLaneRunLock(
       ...queueRecord,
       status: input.terminalStatus,
       updatedAt: input.completedAt,
+      metadata: {
+        ...queueRecord.metadata,
+        [`${input.terminalStatus}LaneRunId`]: input.laneRunId,
+      },
       publicDiagnostics: {
         ...queueRecord.publicDiagnostics,
         status: input.terminalStatus,
@@ -1234,6 +1238,7 @@ export async function stopLaneRun(
       );
     }
 
+    const verifiedLaneRunId = verifiedTarget.state.id;
     const revokedQueueRecord = toSerializableLaneRunQueueRecord({
       ...queueRecord,
       status: "revoked",
@@ -1243,7 +1248,7 @@ export async function stopLaneRun(
         operatorAction: "stop",
         operatorReason: metadataReason,
         revokedByOperatorAt: input.actedAt,
-        revokedLaneRunId: input.laneRunId,
+        revokedLaneRunId: verifiedLaneRunId,
       },
       publicDiagnostics: {
         ...queueRecord.publicDiagnostics,
@@ -1260,12 +1265,12 @@ export async function stopLaneRun(
       laneRunId: input.laneRunId,
       queueRecord: revokedQueueRecord,
       publicDiagnostics: createLaneRunLockDiagnostics(
-        createDiagnosticsLockFromQueueRecord(revokedQueueRecord, input.laneRunId, "revoked", input.actedAt),
+        createDiagnosticsLockFromQueueRecord(revokedQueueRecord, verifiedLaneRunId, "revoked", input.actedAt),
         sanitizedReason,
       ),
       lineage: {
         relationship: "revoked",
-        previousLaneRunId: input.laneRunId,
+        previousLaneRunId: verifiedLaneRunId,
         preservedEvidenceRefs: verifiedTarget.evidenceRefs,
       },
     };
@@ -1353,15 +1358,12 @@ async function createLinkedQueuedOperatorAttempt(
         undefined,
       );
 
-      if (
-        verifiedTarget === undefined ||
-        (queueRecord.status === "revoked" && queueRecord.metadata.revokedLaneRunId !== input.laneRunId)
-      ) {
+      if (verifiedTarget === undefined || !isTerminalQueueRecordLinkedToLaneRun(queueRecord, verifiedTarget.state.id)) {
         return createBlockedLaneRunOperatorActionResult(
           action,
           input,
           diagnosticsLock,
-          "operator action target requires verified revoked lane run state",
+          "operator action target requires verified terminal lane run state",
         );
       }
     }
@@ -1581,6 +1583,18 @@ function createPreservedEvidenceQueueMetadata(
     : {
         preservedEvidenceRefCount: String(preservedEvidenceRefs.length),
       };
+}
+
+function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRunId: string): boolean {
+  if (record.status === "revoked") {
+    return record.metadata.revokedLaneRunId === laneRunId;
+  }
+
+  if (record.status === "superseded") {
+    return record.metadata.supersededLaneRunId === laneRunId;
+  }
+
+  return false;
 }
 
 function toBoundedLaneRunQueueMetadataValue(value: string): string {

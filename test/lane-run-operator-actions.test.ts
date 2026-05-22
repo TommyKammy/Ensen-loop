@@ -247,6 +247,52 @@ test("stop fails closed for a blocked queue item without verified lane state", a
   });
 });
 
+test("stop rejects blocked lineage from a lane run owned by another work item", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        blockerReason: "waiting for operator review",
+      },
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-999",
+        status: "blocked",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-999",
+        }),
+        evidence: {
+          bundleRefs: ["artifacts/evidence/unrelated.json"],
+        },
+      }),
+    );
+
+    const result = await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator stop",
+      actedAt,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified blocked lane run state");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), queued);
+  });
+});
+
 test("retry links a new queued attempt to prior evidence without deleting lane state", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
@@ -269,6 +315,10 @@ test("retry links a new queued attempt to prior evidence without deleting lane s
       completedAt: actedAt,
       terminalStatus: "superseded",
     });
+    assert.equal(
+      (await readLaneRunQueueRecord(stateRoot, "github-issue-112")).metadata.supersededLaneRunId,
+      "lane-run-112-a",
+    );
     await writeLaneRunState(
       stateRoot,
       createLaneRunState({
@@ -567,8 +617,62 @@ test("requeue without a lock requires verified revoked lane state ownership", as
     });
 
     assert.equal(result.ok, false);
-    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified revoked lane run state");
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified terminal lane run state");
     assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), revokedQueue);
+  });
+});
+
+test("requeue without a lock rejects superseded records without explicit lane run ownership", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const supersededQueue = {
+      ...queued,
+      status: "superseded" as const,
+      updatedAt: actedAt,
+      publicDiagnostics: {
+        ...queued.publicDiagnostics,
+        status: "superseded" as const,
+      },
+    };
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-112"),
+      `${JSON.stringify(supersededQueue, null, 2)}\n`,
+      "utf8",
+    );
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-112",
+        status: "failed",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-112",
+        }),
+      }),
+    );
+
+    const result = await requeueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator requeue superseded record",
+      actedAt,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified terminal lane run state");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), supersededQueue);
   });
 });
 
