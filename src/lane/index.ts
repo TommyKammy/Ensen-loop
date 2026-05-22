@@ -782,6 +782,8 @@ export async function claimQueuedLaneRun(
     throw new Error("Lane run claim input is malformed.");
   }
 
+  assertLaneRunClaimTimestamp(input.claimedAt);
+
   return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
     const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
 
@@ -879,6 +881,11 @@ export async function completeLaneRunLock(
     assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.completedAt);
 
     const queueRecord = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+
+    if (queueRecord.id !== existingLock.queueRecordId) {
+      throw new Error("Lane run queue record does not match the active lane run lock.");
+    }
+
     const completedLock = toSerializableLaneRunLock({
       ...existingLock,
       status: input.terminalStatus,
@@ -1098,6 +1105,14 @@ function parseLaneRunQueueSequenceFromRecordId(stableWorkItemId: string, queueRe
   }
 
   return sequence;
+}
+
+function assertLaneRunClaimTimestamp(claimedAt: string): void {
+  const claimedAtMs = Date.parse(claimedAt);
+
+  if (claimedAtMs - Date.now() > laneRunCompletionClockSkewMs) {
+    throw new Error("Lane run claim timestamp must stay within the local clock tolerance.");
+  }
 }
 
 function assertLaneRunCompletionTimestamp(claimedAt: string, completedAt: string): void {
@@ -2311,6 +2326,10 @@ function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
 
   const record = value as unknown as LaneRunQueueRecord;
 
+  if (!isCanonicalLaneRunQueueRecordId(record.stableWorkItemId, record.id, record.enqueueSequence)) {
+    throw new Error("Lane run queue record is malformed.");
+  }
+
   if (
     record.publicDiagnostics.stableWorkItemId !== record.stableWorkItemId ||
     record.publicDiagnostics.laneId !== record.laneId ||
@@ -2322,6 +2341,14 @@ function parseLaneRunQueueRecord(value: unknown): LaneRunQueueRecord {
   }
 
   return record;
+}
+
+function isCanonicalLaneRunQueueRecordId(stableWorkItemId: string, queueRecordId: string, enqueueSequence: number): boolean {
+  try {
+    return parseLaneRunQueueSequenceFromRecordId(stableWorkItemId, queueRecordId) === enqueueSequence;
+  } catch {
+    return false;
+  }
 }
 
 function parseLaneRunLock(value: unknown): LaneRunLock {
