@@ -907,6 +907,7 @@ export async function getLaneRunStatus(stateRoot: string): Promise<LaneRunOperat
 
   try {
     queueRecords = await readLaneRunQueueRecords(stateRoot);
+    await assertLaneRunLocksAreReferencedByQueue(stateRoot, queueRecords);
   } catch (error) {
     if (isMalformedLaneRunStateError(error)) {
       return createMalformedLaneRunStatus();
@@ -966,6 +967,7 @@ export async function explainLaneRun(
 
     try {
       const queueRecords = await readLaneRunQueueRecords(stateRoot);
+      await assertLaneRunLocksAreReferencedByQueue(stateRoot, queueRecords);
       const record = queueRecords.find(
         (candidate) => candidate.stableWorkItemId === input.stableWorkItemId,
       );
@@ -1552,6 +1554,64 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
   });
 
   return records;
+}
+
+async function assertLaneRunLocksAreReferencedByQueue(
+  stateRoot: string,
+  queueRecords: readonly LaneRunQueueRecord[],
+): Promise<void> {
+  const queuedStableWorkItemIds = new Set(queueRecords.map((record) => record.stableWorkItemId));
+
+  for (const stableWorkItemId of await readLaneRunLockStableWorkItemIds(stateRoot)) {
+    await readLaneRunLock(stateRoot, stableWorkItemId);
+
+    if (!queuedStableWorkItemIds.has(stableWorkItemId)) {
+      throw new Error("Lane run lock entry is malformed.");
+    }
+  }
+}
+
+async function readLaneRunLockStableWorkItemIds(stateRoot: string): Promise<readonly string[]> {
+  const resolvedRoot = path.resolve(stateRoot);
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const lockRoot = path.join(resolvedRoot, "lane-run-locks");
+
+  await assertExistingPathSafe(realRoot, lockRoot, "directory");
+
+  const entries = await readdir(lockRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
+  const stableWorkItemIds: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const stableWorkItemId = entry.name.slice(0, -".json".length);
+
+    if (!isSafeStableWorkItemId(stableWorkItemId)) {
+      throw new Error("Lane run lock entry is malformed.");
+    }
+
+    const lockPath = path.join(lockRoot, entry.name);
+
+    if (!entry.isFile()) {
+      const stats = await lstat(lockPath);
+
+      if (!stats.isFile()) {
+        throw new Error("Lane run lock entry is malformed.");
+      }
+    }
+
+    stableWorkItemIds.push(stableWorkItemId);
+  }
+
+  return stableWorkItemIds;
 }
 
 function compareIsoDateTimeInstants(left: string, right: string): number {

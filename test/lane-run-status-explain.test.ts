@@ -590,6 +590,86 @@ test("lock filename and content id mismatches are reported as malformed state", 
   });
 });
 
+test("orphaned lock without a queued record is reported as malformed state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const lockPath = resolveLaneRunLockPath(stateRoot, "github-issue-111");
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        schemaVersion: "ensen.lane-run-lock.v1",
+        stableWorkItemId: "github-issue-111",
+        queueRecordId: "queue-github-issue-111-1",
+        laneRunId: "lane-run-111-a",
+        laneId: "owner-dogfood",
+        source: "github-issue",
+        repositoryClassification: "owner-controlled-dogfood",
+        status: "active",
+        active: true,
+        claimedAt,
+        claimedBy: "local-supervisor",
+        startsAgentExecution: false,
+      })}\n`,
+      { encoding: "utf8" },
+    );
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.queue.length, 0);
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
+test("unreferenced lock records for other issues are reported as malformed state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const lockPath = resolveLaneRunLockPath(stateRoot, "github-issue-112");
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        schemaVersion: "ensen.lane-run-lock.v1",
+        stableWorkItemId: "github-issue-112",
+        queueRecordId: "queue-github-issue-112-1",
+        laneRunId: "lane-run-112-a",
+        laneId: "owner-dogfood",
+        source: "github-issue",
+        repositoryClassification: "owner-controlled-dogfood",
+        status: "active",
+        active: true,
+        claimedAt,
+        claimedBy: "local-supervisor",
+        startsAgentExecution: false,
+      })}\n`,
+      { encoding: "utf8" },
+    );
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+  });
+});
+
 test("explain without issue prefers blocked queue items over runnable work", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
