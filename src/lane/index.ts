@@ -1111,7 +1111,7 @@ export async function completeLaneRunLock(
       updatedAt: input.completedAt,
       metadata: {
         ...queueRecord.metadata,
-        [`${input.terminalStatus}LaneRunId`]: input.laneRunId,
+        [`${input.terminalStatus}LaneRunId`]: toBoundedLaneRunQueueMetadataValue(input.laneRunId),
       },
       publicDiagnostics: {
         ...queueRecord.publicDiagnostics,
@@ -1160,7 +1160,7 @@ export async function stopLaneRun(
         );
       }
 
-      assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.actedAt);
+      assertLaneRunOperatorActionTimestamp(existingLock.claimedAt, input.actedAt);
 
       const verifiedLaneRunId = existingLock.laneRunId;
       const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, verifiedLaneRunId);
@@ -1835,6 +1835,15 @@ function assertLaneRunCompletionTimestamp(claimedAt: string, completedAt: string
     completedAtMs - Date.now() > laneRunCompletionClockSkewMs
   ) {
     throw new Error("Lane run lock completion timestamp must stay within the active claim window.");
+  }
+}
+
+function assertLaneRunOperatorActionTimestamp(claimedAt: string, actedAt: string): void {
+  const claimedAtMs = Date.parse(claimedAt);
+  const actedAtMs = Date.parse(actedAt);
+
+  if (actedAtMs < claimedAtMs || actedAtMs - Date.now() > laneRunCompletionClockSkewMs) {
+    throw new Error("Lane run operator action timestamp must not predate the active claim or exceed local clock tolerance.");
   }
 }
 

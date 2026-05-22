@@ -144,6 +144,45 @@ test("stop stores a bounded public reason in queue metadata", async () => {
   });
 });
 
+test("stop revokes a long-running active lane run", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const staleQueuedAt = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
+    const staleClaimedAt = new Date(Date.now() - 9 * 24 * 60 * 60 * 1000).toISOString();
+
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: staleQueuedAt,
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt: staleClaimedAt,
+    });
+
+    const result = await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator revokes stale active lane run",
+      actedAt,
+    });
+
+    assert.equal(result.ok, true);
+
+    const lock = await readLaneRunLock(stateRoot, "github-issue-112");
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+
+    assert.equal(lock.status, "revoked");
+    assert.equal(lock.releasedAt, actedAt);
+    assert.equal(queue.status, "revoked");
+    assert.equal(queue.metadata.revokedLaneRunId, "lane-run-112-a");
+  });
+});
+
 test("stop reads active lineage evidence before mutating durable state", async () => {
   await withStateRoot(async (stateRoot) => {
     const queued = await enqueueLaneRun(stateRoot, {

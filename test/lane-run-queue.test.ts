@@ -332,6 +332,47 @@ test("rejects attempts to rewrite a terminal lock", async () => {
   }
 });
 
+test("bounds terminal queue metadata for long lane run ids", async () => {
+  const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
+
+  try {
+    const longLaneRunId = `lane-run-110-${"a".repeat(260)}`;
+
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: longLaneRunId,
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      laneRunId: claim.lock.laneRunId,
+      completedAt,
+      terminalStatus: "completed",
+    });
+
+    const durableLock = await readLaneRunLock(stateRoot, "github-issue-110");
+    const durableQueueRecord = await readLaneRunQueueRecord(stateRoot, "github-issue-110");
+
+    assert.equal(durableLock.laneRunId, longLaneRunId);
+    assert.equal(durableQueueRecord.status, "completed");
+    assert.equal(durableQueueRecord.metadata.completedLaneRunId.length, 256);
+    assert.equal(durableQueueRecord.metadata.completedLaneRunId.endsWith("..."), true);
+  } finally {
+    await rm(stateRoot, { recursive: true, force: true });
+  }
+});
+
 test("rejects completion timestamps outside the active claim window", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
