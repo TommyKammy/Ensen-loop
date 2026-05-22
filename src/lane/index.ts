@@ -1124,6 +1124,7 @@ export async function stopLaneRun(
     const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? "operator requested stop";
+    const metadataReason = toLaneRunQueueMetadataValue(sanitizedReason);
 
     if (queueRecord === undefined) {
       return createBlockedLaneRunOperatorActionResult("stop", input, undefined, "requested issue is not queued");
@@ -1162,9 +1163,9 @@ export async function stopLaneRun(
         status: "revoked",
         updatedAt: input.actedAt,
         metadata: {
-          ...queueRecord.metadata,
+          ...copyQueueMetadataWithout(queueRecord.metadata, ["blockerReason"]),
           operatorAction: "stop",
-          operatorReason: sanitizedReason,
+          operatorReason: metadataReason,
           revokedByOperatorAt: input.actedAt,
           revokedLaneRunId: existingLock.laneRunId,
         },
@@ -1233,7 +1234,7 @@ export async function stopLaneRun(
       metadata: {
         ...copyQueueMetadataWithout(queueRecord.metadata, ["blockerReason"]),
         operatorAction: "stop",
-        operatorReason: sanitizedReason,
+        operatorReason: metadataReason,
         revokedByOperatorAt: input.actedAt,
         revokedLaneRunId: input.laneRunId,
       },
@@ -1317,12 +1318,19 @@ async function createLinkedQueuedOperatorAttempt(
       return createBlockedLaneRunOperatorActionResult(action, input, undefined, "requested issue is not queued");
     }
 
-    const diagnosticsLock = existingLock ?? createDiagnosticsLockFromQueueRecord(queueRecord, input.laneRunId, "active");
+    const diagnosticsLock =
+      existingLock ??
+      createDiagnosticsLockFromQueueRecord(
+        queueRecord,
+        input.laneRunId,
+        toQueueRecordDiagnosticsLockStatus(queueRecord),
+      );
 
     if (existingLock === undefined) {
-      const eligibleBlockedQueue = action === "requeue" && queueRecord.status === "revoked";
+      const eligibleTerminalQueue =
+        action === "requeue" && (queueRecord.status === "revoked" || queueRecord.status === "superseded");
 
-      if (!eligibleBlockedQueue) {
+      if (!eligibleTerminalQueue) {
         return createBlockedLaneRunOperatorActionResult(
           action,
           input,
@@ -1338,7 +1346,10 @@ async function createLinkedQueuedOperatorAttempt(
         undefined,
       );
 
-      if (verifiedTarget === undefined || queueRecord.metadata.revokedLaneRunId !== input.laneRunId) {
+      if (
+        verifiedTarget === undefined ||
+        (queueRecord.status === "revoked" && queueRecord.metadata.revokedLaneRunId !== input.laneRunId)
+      ) {
         return createBlockedLaneRunOperatorActionResult(
           action,
           input,
@@ -1378,6 +1389,7 @@ async function createLinkedQueuedOperatorAttempt(
     const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, input.laneRunId);
     const enqueueSequence = queueRecord.enqueueSequence + 1;
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? `operator requested ${action}`;
+    const metadataReason = toLaneRunQueueMetadataValue(sanitizedReason);
     const linkedMetadata = copyQueueMetadataWithout(queueRecord.metadata, [
       "blockerReason",
       "preservedEvidenceRefCount",
@@ -1386,7 +1398,7 @@ async function createLinkedQueuedOperatorAttempt(
     const operatorMetadata = {
       ...linkedMetadata,
       operatorAction: action,
-      operatorReason: sanitizedReason,
+      operatorReason: metadataReason,
       previousQueueRecordId: queueRecord.id,
       previousQueueStatus: queueRecord.status,
       [`${action}OfLaneRunId`]: input.laneRunId,
@@ -1524,6 +1536,12 @@ function createDiagnosticsLockFromQueueRecord(
       };
 }
 
+function toQueueRecordDiagnosticsLockStatus(record: LaneRunQueueRecord): LaneRunLockStatus {
+  return record.status === "completed" || record.status === "revoked" || record.status === "superseded"
+    ? record.status
+    : "active";
+}
+
 async function readLaneRunEvidenceRefs(stateRoot: string, laneRunId: string): Promise<readonly string[]> {
   const state = await readOptionalLaneRunState(stateRoot, laneRunId);
 
@@ -1560,6 +1578,10 @@ function createPreservedEvidenceQueueMetadata(
     : {
         preservedEvidenceRefCount: String(preservedEvidenceRefs.length),
       };
+}
+
+function toLaneRunQueueMetadataValue(value: string): string {
+  return value.length <= 256 ? value : `${value.slice(0, 253)}...`;
 }
 
 function copyQueueMetadataWithout(
