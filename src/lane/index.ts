@@ -1162,7 +1162,8 @@ export async function stopLaneRun(
 
       assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.actedAt);
 
-      const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, existingLock.laneRunId);
+      const verifiedLaneRunId = existingLock.laneRunId;
+      const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, verifiedLaneRunId);
       const revokedLock = toSerializableLaneRunLock({
         ...existingLock,
         status: "revoked",
@@ -1178,7 +1179,7 @@ export async function stopLaneRun(
           operatorAction: "stop",
           operatorReason: metadataReason,
           revokedByOperatorAt: input.actedAt,
-          revokedLaneRunId: existingLock.laneRunId,
+          revokedLaneRunId: verifiedLaneRunId,
         },
         publicDiagnostics: {
           ...queueRecord.publicDiagnostics,
@@ -1198,7 +1199,7 @@ export async function stopLaneRun(
         publicDiagnostics: createLaneRunLockDiagnostics(revokedLock, sanitizedReason),
         lineage: {
           relationship: "revoked",
-          previousLaneRunId: existingLock.laneRunId,
+          previousLaneRunId: verifiedLaneRunId,
           preservedEvidenceRefs,
         },
       };
@@ -1325,6 +1326,8 @@ async function createLinkedQueuedOperatorAttempt(
     const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
     const relationship = action === "retry" ? "retried" : "requeued";
+    let verifiedLaneRunId = input.laneRunId;
+    let verifiedEvidenceRefs: readonly string[] | undefined;
 
     if (queueRecord === undefined) {
       return createBlockedLaneRunOperatorActionResult(action, input, undefined, "requested issue is not queued");
@@ -1366,6 +1369,9 @@ async function createLinkedQueuedOperatorAttempt(
           "operator action target requires verified terminal lane run state",
         );
       }
+
+      verifiedLaneRunId = verifiedTarget.state.id;
+      verifiedEvidenceRefs = verifiedTarget.evidenceRefs;
     }
 
     if (existingLock !== undefined && existingLock.laneRunId !== input.laneRunId) {
@@ -1375,6 +1381,10 @@ async function createLinkedQueuedOperatorAttempt(
         existingLock,
         "operator action target does not match the selected lane run",
       );
+    }
+
+    if (existingLock !== undefined) {
+      verifiedLaneRunId = existingLock.laneRunId;
     }
 
     if (existingLock?.active === true) {
@@ -1395,7 +1405,7 @@ async function createLinkedQueuedOperatorAttempt(
       );
     }
 
-    const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, input.laneRunId);
+    const preservedEvidenceRefs = verifiedEvidenceRefs ?? (await readLaneRunEvidenceRefs(stateRoot, verifiedLaneRunId));
     const enqueueSequence = queueRecord.enqueueSequence + 1;
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? `operator requested ${action}`;
     const metadataReason = toBoundedLaneRunQueueMetadataValue(sanitizedReason);
@@ -1406,7 +1416,7 @@ async function createLinkedQueuedOperatorAttempt(
       operatorReason: metadataReason,
       previousQueueRecordId: queueRecord.id,
       previousQueueStatus: queueRecord.status,
-      [`${action}OfLaneRunId`]: input.laneRunId,
+      [`${action}OfLaneRunId`]: verifiedLaneRunId,
       ...createPreservedEvidenceQueueMetadata(preservedEvidenceRefs),
     };
     const nextQueueRecord = toSerializableLaneRunQueueRecord({
@@ -1438,13 +1448,13 @@ async function createLinkedQueuedOperatorAttempt(
       ok: true,
       action,
       stableWorkItemId: input.stableWorkItemId,
-      laneRunId: input.laneRunId,
+      laneRunId: verifiedLaneRunId,
       queueRecord: nextQueueRecord,
       lock: existingLock,
       publicDiagnostics: createLaneRunLockDiagnostics(diagnosticsLock, sanitizedReason),
       lineage: {
         relationship,
-        previousLaneRunId: input.laneRunId,
+        previousLaneRunId: verifiedLaneRunId,
         newQueueRecordId: nextQueueRecord.id,
         preservedEvidenceRefs,
       },

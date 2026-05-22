@@ -622,6 +622,63 @@ test("requeue without a lock requires verified revoked lane state ownership", as
   });
 });
 
+test("requeue without a lock rejects same-work-item lane state not linked by the terminal queue record", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator stop before lockless requeue",
+      actedAt,
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-b",
+        workItemId: "issue-112",
+        status: "failed",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-b",
+          laneRunId: "lane-run-112-b",
+          workItemId: "issue-112",
+        }),
+        evidence: {
+          bundleRefs: ["artifacts/evidence/unlinked-lane-run.json"],
+        },
+      }),
+    );
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-112"), { force: true });
+    const revokedQueue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+
+    const result = await requeueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-b",
+      reason: "operator requeue unlinked lane state",
+      actedAt,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified terminal lane run state");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), revokedQueue);
+  });
+});
+
 test("requeue without a lock rejects superseded records without explicit lane run ownership", async () => {
   await withStateRoot(async (stateRoot) => {
     const queued = await enqueueLaneRun(stateRoot, {
