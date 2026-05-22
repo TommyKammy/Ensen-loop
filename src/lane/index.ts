@@ -1141,6 +1141,7 @@ export async function stopLaneRun(
     if (existingLock?.active === true) {
       assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.actedAt);
 
+      const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, existingLock.laneRunId);
       const revokedLock = toSerializableLaneRunLock({
         ...existingLock,
         status: "revoked",
@@ -1177,7 +1178,7 @@ export async function stopLaneRun(
         lineage: {
           relationship: "revoked",
           previousLaneRunId: existingLock.laneRunId,
-          preservedEvidenceRefs: await readLaneRunEvidenceRefs(stateRoot, existingLock.laneRunId),
+          preservedEvidenceRefs,
         },
       };
     }
@@ -1197,6 +1198,22 @@ export async function stopLaneRun(
         input,
         createDiagnosticsLockFromQueueRecord(queueRecord, input.laneRunId, "active"),
         "only active or blocked lane runs can be stopped",
+      );
+    }
+
+    const verifiedTarget = await readVerifiedQueuedLaneRunOperatorTarget(
+      stateRoot,
+      queueRecord,
+      input.laneRunId,
+      "blocked",
+    );
+
+    if (verifiedTarget === undefined) {
+      return createBlockedLaneRunOperatorActionResult(
+        "stop",
+        input,
+        createDiagnosticsLockFromQueueRecord(queueRecord, input.laneRunId, "active"),
+        "operator action target requires verified blocked lane run state",
       );
     }
 
@@ -1232,7 +1249,7 @@ export async function stopLaneRun(
       lineage: {
         relationship: "revoked",
         previousLaneRunId: input.laneRunId,
-        preservedEvidenceRefs: await readLaneRunEvidenceRefs(stateRoot, input.laneRunId),
+        preservedEvidenceRefs: verifiedTarget.evidenceRefs,
       },
     };
   });
@@ -1304,6 +1321,22 @@ async function createLinkedQueuedOperatorAttempt(
           "operator action requires a terminal lane run record",
         );
       }
+
+      const verifiedTarget = await readVerifiedQueuedLaneRunOperatorTarget(
+        stateRoot,
+        queueRecord,
+        input.laneRunId,
+        undefined,
+      );
+
+      if (verifiedTarget === undefined || queueRecord.metadata.revokedLaneRunId !== input.laneRunId) {
+        return createBlockedLaneRunOperatorActionResult(
+          action,
+          input,
+          diagnosticsLock,
+          "operator action target requires verified revoked lane run state",
+        );
+      }
     }
 
     if (existingLock !== undefined && existingLock.laneRunId !== input.laneRunId) {
@@ -1344,9 +1377,7 @@ async function createLinkedQueuedOperatorAttempt(
       previousQueueRecordId: queueRecord.id,
       previousQueueStatus: queueRecord.status,
       [`${action}OfLaneRunId`]: input.laneRunId,
-      ...(preservedEvidenceRefs.length > 0
-        ? { preservedEvidenceRefs: preservedEvidenceRefs.join(",") }
-        : {}),
+      ...createPreservedEvidenceQueueMetadata(preservedEvidenceRefs),
     };
     const nextQueueRecord = toSerializableLaneRunQueueRecord({
       schemaVersion: "ensen.lane-run-queue.v1",
@@ -1484,6 +1515,38 @@ async function readLaneRunEvidenceRefs(stateRoot: string, laneRunId: string): Pr
   const state = await readOptionalLaneRunState(stateRoot, laneRunId);
 
   return state?.evidence.bundleRefs ?? [];
+}
+
+async function readVerifiedQueuedLaneRunOperatorTarget(
+  stateRoot: string,
+  queueRecord: LaneRunQueueRecord,
+  laneRunId: string,
+  expectedStatus: LaneRunStatus | undefined,
+): Promise<{ readonly state: LaneRunState; readonly evidenceRefs: readonly string[] } | undefined> {
+  const state = await readOptionalLaneRunState(stateRoot, laneRunId);
+
+  if (state === undefined || state.workItemId !== queueRecord.workItemId) {
+    return undefined;
+  }
+
+  if (expectedStatus !== undefined && state.status !== expectedStatus) {
+    return undefined;
+  }
+
+  return {
+    state,
+    evidenceRefs: state.evidence.bundleRefs,
+  };
+}
+
+function createPreservedEvidenceQueueMetadata(
+  preservedEvidenceRefs: readonly string[],
+): Record<string, string> {
+  return preservedEvidenceRefs.length === 0
+    ? {}
+    : {
+        preservedEvidenceRefCount: String(preservedEvidenceRefs.length),
+      };
 }
 
 async function readOptionalLaneRunState(

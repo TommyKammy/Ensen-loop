@@ -21,6 +21,7 @@ import {
   retryLaneRun,
   stopLaneRun,
 } from "../lane/index.js";
+import type { LaneRunOperatorActionResult } from "../lane/index.js";
 import {
   createBlockedRunResultFromValidationIssues,
   createBlockedRunStatusSnapshotFromValidationIssues,
@@ -42,6 +43,22 @@ const [, , command, ...args] = process.argv;
 
 function printJson(value: unknown): void {
   console.log(`${JSON.stringify(value, null, 2)}\n`);
+}
+
+function projectLaneRunOperatorActionCliResult(result: LaneRunOperatorActionResult): unknown {
+  return {
+    ok: result.ok,
+    action: result.action,
+    stableWorkItemId: result.stableWorkItemId,
+    laneRunId: result.laneRunId,
+    publicDiagnostics: result.publicDiagnostics,
+    lineage: {
+      relationship: result.lineage.relationship,
+      previousLaneRunId: result.lineage.previousLaneRunId,
+      newQueueRecordId: result.lineage.newQueueRecordId,
+      preservedEvidenceRefCount: result.lineage.preservedEvidenceRefs.length,
+    },
+  };
 }
 
 async function readJsonFile(filePath: string): Promise<unknown> {
@@ -314,7 +331,7 @@ async function main(): Promise<number> {
               actedAt,
             });
 
-    printJson(result);
+    printJson(projectLaneRunOperatorActionCliResult(result));
     return result.ok ? 0 : 1;
   }
 

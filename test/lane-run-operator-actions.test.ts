@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -105,6 +105,67 @@ test("stop revokes an active lane run with a public operator reason", async () =
   });
 });
 
+test("stop reads active lineage evidence before mutating durable state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await writeFile(path.join(stateRoot, "lane-runs", "lane-run-112-a.json"), "{}\n", "utf8");
+
+    await assert.rejects(
+      () =>
+        stopLaneRun(stateRoot, {
+          stableWorkItemId: "github-issue-112",
+          laneRunId: "lane-run-112-a",
+          reason: "operator stop",
+          actedAt,
+        }),
+      /Lane run state/,
+    );
+
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), queued);
+    assert.deepEqual(await readLaneRunLock(stateRoot, "github-issue-112"), claim.lock);
+  });
+});
+
+test("stop fails closed for a blocked queue item without verified lane state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        blockerReason: "waiting for operator review",
+      },
+    });
+
+    const result = await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator stop",
+      actedAt,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified blocked lane run state");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), queued);
+  });
+});
+
 test("retry links a new queued attempt to prior evidence without deleting lane state", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
@@ -166,7 +227,8 @@ test("retry links a new queued attempt to prior evidence without deleting lane s
     assert.equal(queue.enqueueSequence, 2);
     assert.equal(queue.metadata.retryOfLaneRunId, "lane-run-112-a");
     assert.equal(queue.metadata.previousQueueRecordId, "queue-github-issue-112-1");
-    assert.equal(queue.metadata.preservedEvidenceRefs, "artifacts/evidence/lane-run-112-a.json");
+    assert.equal(queue.metadata.preservedEvidenceRefCount, "1");
+    assert.equal(Object.hasOwn(queue.metadata, "preservedEvidenceRefs"), false);
     assert.equal(await readFile(path.join(stateRoot, "lane-runs", "lane-run-112-a.json"), "utf8"), originalState);
   });
 });
@@ -244,6 +306,57 @@ test("requeue returns a revoked work item to the queue with lineage", async () =
   });
 });
 
+test("requeue without a lock requires verified revoked lane state ownership", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        blockerReason: "waiting for operator review",
+      },
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-112",
+        status: "blocked",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-112",
+        }),
+      }),
+    );
+    const stopped = await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator stop blocked item",
+      actedAt,
+    });
+    assert.equal(stopped.ok, true);
+    const revokedQueue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+
+    const result = await requeueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-b",
+      reason: "operator requeue wrong target",
+      actedAt,
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.publicDiagnostics.reason, "operator action target requires verified revoked lane run state");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), revokedQueue);
+  });
+});
+
 test("CLI stop emits public-safe action diagnostics", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
@@ -285,5 +398,7 @@ test("CLI stop emits public-safe action diagnostics", async () => {
     assert.equal(output.publicDiagnostics?.reason, "operator <redacted> stop");
     assert.equal(JSON.stringify(output).includes(stateRoot), false);
     assert.equal(JSON.stringify(output).includes("ghp_sampleSecretValue"), false);
+    assert.equal(JSON.stringify(output).includes("queueRecord"), false);
+    assert.equal(JSON.stringify(output).includes("metadata"), false);
   });
 });
