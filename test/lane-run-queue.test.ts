@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,10 @@ import {
 const queuedAt = "2026-05-21T05:00:00.000Z";
 const claimedAt = "2026-05-21T05:01:00.000Z";
 const completedAt = "2026-05-21T05:02:00.000Z";
+
+function laneRunIdDigest(laneRunId: string): string {
+  return createHash("sha256").update(laneRunId).digest("hex");
+}
 
 test("queues an issue work item and claims it exactly once while the lock is active", async () => {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
@@ -368,6 +373,7 @@ test("bounds terminal queue metadata for long lane run ids", async () => {
     assert.equal(durableQueueRecord.status, "completed");
     assert.equal(durableQueueRecord.metadata.completedLaneRunId.length, 256);
     assert.equal(durableQueueRecord.metadata.completedLaneRunId.endsWith("..."), true);
+    assert.equal(durableQueueRecord.metadata.completedLaneRunIdSha256, laneRunIdDigest(longLaneRunId));
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }

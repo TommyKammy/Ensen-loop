@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +28,10 @@ const execFileAsync = promisify(execFile);
 const queuedAt = new Date(Date.now() - 120_000).toISOString();
 const claimedAt = new Date(Date.now() - 60_000).toISOString();
 const actedAt = new Date(Date.now() - 1_000).toISOString();
+
+function laneRunIdDigest(laneRunId: string): string {
+  return createHash("sha256").update(laneRunId).digest("hex");
+}
 
 async function withStateRoot(callback: (stateRoot: string) => Promise<void>): Promise<void> {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
@@ -826,6 +831,82 @@ test("requeue without a lock accepts verified superseded queue records", async (
     assert.equal(queue.status, "queued");
     assert.equal(queue.metadata.previousQueueStatus, "superseded");
     assert.equal(queue.metadata.requeueOfLaneRunId, "lane-run-112-a");
+  });
+});
+
+test("requeue without a lock verifies terminal lineage by digest when metadata id is bounded", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      completedAt: actedAt,
+      terminalStatus: "superseded",
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-112",
+        status: "failed",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-112",
+        }),
+      }),
+    );
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-112"), { force: true });
+
+    const supersededQueue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-112"),
+      `${JSON.stringify(
+        {
+          ...supersededQueue,
+          metadata: {
+            ...supersededQueue.metadata,
+            supersededLaneRunId: "bounded-lane-run-id-projection",
+            supersededLaneRunIdSha256: laneRunIdDigest("lane-run-112-a"),
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await requeueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator requeue superseded record",
+      actedAt,
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.lineage.previousLaneRunId, "lane-run-112-a");
+
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+    assert.equal(queue.status, "queued");
+    assert.equal(queue.metadata.previousQueueStatus, "superseded");
+    assert.equal(queue.metadata.requeueOfLaneRunId, "lane-run-112-a");
+    assert.equal(queue.metadata.requeueOfLaneRunIdSha256, laneRunIdDigest("lane-run-112-a"));
   });
 });
 

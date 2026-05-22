@@ -1,6 +1,6 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, realpath, rename, rm, rmdir, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
@@ -1111,7 +1111,7 @@ export async function completeLaneRunLock(
       updatedAt: input.completedAt,
       metadata: {
         ...queueRecord.metadata,
-        [`${input.terminalStatus}LaneRunId`]: toBoundedLaneRunQueueMetadataValue(input.laneRunId),
+        ...createLaneRunIdQueueMetadata(input.terminalStatus, input.laneRunId),
       },
       publicDiagnostics: {
         ...queueRecord.publicDiagnostics,
@@ -1179,7 +1179,7 @@ export async function stopLaneRun(
           operatorAction: "stop",
           operatorReason: metadataReason,
           revokedByOperatorAt: input.actedAt,
-          revokedLaneRunId: verifiedLaneRunId,
+          ...createLaneRunIdQueueMetadata("revoked", verifiedLaneRunId),
         },
         publicDiagnostics: {
           ...queueRecord.publicDiagnostics,
@@ -1249,7 +1249,7 @@ export async function stopLaneRun(
         operatorAction: "stop",
         operatorReason: metadataReason,
         revokedByOperatorAt: input.actedAt,
-        revokedLaneRunId: verifiedLaneRunId,
+        ...createLaneRunIdQueueMetadata("revoked", verifiedLaneRunId),
       },
       publicDiagnostics: {
         ...queueRecord.publicDiagnostics,
@@ -1416,7 +1416,7 @@ async function createLinkedQueuedOperatorAttempt(
       operatorReason: metadataReason,
       previousQueueRecordId: queueRecord.id,
       previousQueueStatus: queueRecord.status,
-      [`${action}OfLaneRunId`]: verifiedLaneRunId,
+      ...createLaneRunIdQueueMetadata(`${action}Of`, verifiedLaneRunId),
       ...createPreservedEvidenceQueueMetadata(preservedEvidenceRefs),
     };
     const nextQueueRecord = toSerializableLaneRunQueueRecord({
@@ -1597,14 +1597,38 @@ function createPreservedEvidenceQueueMetadata(
 
 function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRunId: string): boolean {
   if (record.status === "revoked") {
-    return record.metadata.revokedLaneRunId === laneRunId;
+    return isLaneRunIdMetadataMatch(record.metadata, "revoked", laneRunId);
   }
 
   if (record.status === "superseded") {
-    return record.metadata.supersededLaneRunId === laneRunId;
+    return isLaneRunIdMetadataMatch(record.metadata, "superseded", laneRunId);
   }
 
   return false;
+}
+
+function createLaneRunIdQueueMetadata(prefix: string, laneRunId: string): Record<string, string> {
+  return {
+    [`${prefix}LaneRunId`]: toBoundedLaneRunQueueMetadataValue(laneRunId),
+    [`${prefix}LaneRunIdSha256`]: createLaneRunIdDigest(laneRunId),
+  };
+}
+
+function isLaneRunIdMetadataMatch(
+  metadata: Record<string, string>,
+  prefix: string,
+  laneRunId: string,
+): boolean {
+  const projectedLaneRunId = metadata[`${prefix}LaneRunId`];
+
+  return (
+    projectedLaneRunId === laneRunId ||
+    (projectedLaneRunId !== undefined && metadata[`${prefix}LaneRunIdSha256`] === createLaneRunIdDigest(laneRunId))
+  );
+}
+
+function createLaneRunIdDigest(laneRunId: string): string {
+  return createHash("sha256").update(laneRunId).digest("hex");
 }
 
 function toBoundedLaneRunQueueMetadataValue(value: string): string {
