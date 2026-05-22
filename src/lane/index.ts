@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import type { Stats } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, realpath, rename, rm, rmdir, utimes } from "node:fs/promises";
+import { lstat, mkdir, open, readdir, realpath, rename, rm, rmdir, utimes } from "node:fs/promises";
 import type { FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -14,6 +14,7 @@ import {
 } from "../core/index.js";
 import type { LaneEvidenceRefs } from "../evidence/index.js";
 import type { EvidenceBundleRef } from "../protocol/index.js";
+import { containsUnsafePublicArtifactText, sanitizePublicDiagnosticMessage } from "../safety/public-artifact.js";
 import { sampleLocalWorkItem } from "../work-item/index.js";
 
 export type LaneRunStatus =
@@ -152,6 +153,55 @@ export interface LaneRunLock {
   readonly claimedBy: string;
   readonly releasedAt?: string;
   readonly startsAgentExecution: false;
+}
+
+export type LaneRunOperatorVerificationState =
+  | "not-started"
+  | "running"
+  | "blocked"
+  | "succeeded"
+  | "unknown";
+
+export interface LaneRunOperatorStatusItem {
+  readonly selectedIssue?: string;
+  readonly stableWorkItemId: string;
+  readonly laneId?: string;
+  readonly laneState: LaneRunQueueStatus | LaneRunLockStatus | "blocked";
+  readonly verificationState: LaneRunOperatorVerificationState;
+  readonly blockerReason?: string;
+  readonly nextOperatorAction: string;
+  readonly activeLock?: {
+    readonly laneRunId: string;
+    readonly status: LaneRunLockStatus;
+  };
+}
+
+export interface LaneRunOperatorStatus {
+  readonly schemaVersion: "ensen.lane-run-status.v1";
+  readonly state: "ok" | "blocked";
+  readonly queue: readonly LaneRunOperatorStatusItem[];
+  readonly blockerReason?: string;
+  readonly nextOperatorAction?: string;
+}
+
+export interface ExplainLaneRunInput {
+  readonly stableWorkItemId?: string;
+}
+
+export interface LaneRunOperatorExplanation {
+  readonly schemaVersion: "ensen.lane-run-explain.v1";
+  readonly state: "ok" | "blocked";
+  readonly selectedIssue?: string;
+  readonly stableWorkItemId?: string;
+  readonly laneId?: string;
+  readonly laneState: LaneRunQueueStatus | LaneRunLockStatus | "blocked";
+  readonly verificationState: LaneRunOperatorVerificationState;
+  readonly blockerReason?: string;
+  readonly nextOperatorAction: string;
+  readonly activeLock?: {
+    readonly laneRunId: string;
+    readonly status: LaneRunLockStatus;
+  };
 }
 
 export interface EnqueueLaneRunInput {
@@ -852,6 +902,126 @@ export async function readLaneRunLock(stateRoot: string, stableWorkItemId: strin
   return lock;
 }
 
+export async function getLaneRunStatus(stateRoot: string): Promise<LaneRunOperatorStatus> {
+  let queueRecords: readonly LaneRunQueueRecord[];
+
+  try {
+    queueRecords = await readLaneRunQueueRecords(stateRoot);
+    await assertLaneRunLocksAreReferencedByQueue(stateRoot, queueRecords);
+  } catch (error) {
+    if (isMalformedLaneRunStateError(error)) {
+      return createMalformedLaneRunStatus();
+    }
+
+    throw error;
+  }
+
+  if (queueRecords.length === 0) {
+    return {
+      schemaVersion: "ensen.lane-run-status.v1",
+      state: "blocked",
+      queue: [],
+      blockerReason: "no selected issue",
+      nextOperatorAction: "select or enqueue a lane run before claiming readiness",
+    };
+  }
+
+  let queue: readonly LaneRunOperatorStatusItem[];
+
+  try {
+    queue = await Promise.all(
+      queueRecords.map(async (record) => createLaneRunOperatorStatusItem(stateRoot, record)),
+    );
+  } catch (error) {
+    if (isMalformedLaneRunStateError(error)) {
+      return createMalformedLaneRunStatus();
+    }
+
+    throw error;
+  }
+  const blockedItem = queue.find((item) => isBlockedOperatorStatusItem(item));
+
+  if (blockedItem !== undefined) {
+    return {
+      schemaVersion: "ensen.lane-run-status.v1",
+      state: "blocked",
+      queue,
+      blockerReason: resolveBlockedOperatorStatusReason(blockedItem),
+      nextOperatorAction: blockedItem.nextOperatorAction,
+    };
+  }
+
+  return {
+    schemaVersion: "ensen.lane-run-status.v1",
+    state: "ok",
+    queue,
+  };
+}
+
+export async function explainLaneRun(
+  stateRoot: string,
+  input: ExplainLaneRunInput = {},
+): Promise<LaneRunOperatorExplanation> {
+  if (input.stableWorkItemId !== undefined) {
+    assertSafeStableWorkItemId(input.stableWorkItemId);
+
+    try {
+      const queueRecords = await readLaneRunQueueRecords(stateRoot);
+      await assertLaneRunLocksAreReferencedByQueue(stateRoot, queueRecords);
+      const record = queueRecords.find(
+        (candidate) => candidate.stableWorkItemId === input.stableWorkItemId,
+      );
+
+      if (record === undefined) {
+        return createRequestedIssueNotFoundExplanation(input.stableWorkItemId);
+      }
+
+      const item = await createLaneRunOperatorStatusItem(stateRoot, record);
+
+      return {
+        schemaVersion: "ensen.lane-run-explain.v1",
+        state: isBlockedOperatorStatusItem(item) ? "blocked" : "ok",
+        selectedIssue: item.selectedIssue,
+        stableWorkItemId: item.stableWorkItemId,
+        laneId: item.laneId,
+        laneState: item.laneState,
+        verificationState: item.verificationState,
+        blockerReason: item.blockerReason,
+        nextOperatorAction: item.nextOperatorAction,
+        activeLock: item.activeLock,
+      };
+    } catch (error) {
+      if (isMalformedLaneRunStateError(error)) {
+        return createMalformedLaneRunExplanation(input.stableWorkItemId);
+      }
+
+      throw error;
+    }
+  }
+
+  const status = await getLaneRunStatus(stateRoot);
+  const selected = selectDefaultLaneRunExplanationItem(status.queue);
+
+  if (selected === undefined) {
+    return status.blockerReason === "lane run state is malformed"
+      ? createMalformedLaneRunExplanation(undefined)
+      : createNoSelectedIssueExplanation();
+  }
+
+  return {
+    schemaVersion: "ensen.lane-run-explain.v1",
+    state: isBlockedOperatorStatusItem(selected) ? "blocked" : "ok",
+    selectedIssue: selected.selectedIssue,
+    stableWorkItemId: selected.stableWorkItemId,
+    laneId: selected.laneId,
+    laneState: selected.laneState,
+    verificationState: selected.verificationState,
+    blockerReason: selected.blockerReason,
+    nextOperatorAction: selected.nextOperatorAction,
+    activeLock: selected.activeLock,
+  };
+}
+
 export async function completeLaneRunLock(
   stateRoot: string,
   input: CompleteLaneRunLockInput,
@@ -1332,6 +1502,398 @@ async function readOptionalLaneRunLock(
     throw error;
   }
 }
+
+async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly LaneRunQueueRecord[]> {
+  const resolvedRoot = path.resolve(stateRoot);
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const queueRoot = path.join(resolvedRoot, "lane-run-queue");
+
+  await assertExistingPathSafe(realRoot, queueRoot, "directory");
+
+  const entries = await readdir(queueRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
+  const records: LaneRunQueueRecord[] = [];
+
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const stableWorkItemId = entry.name.slice(0, -".json".length);
+
+    if (!isSafeStableWorkItemId(stableWorkItemId)) {
+      throw new Error("Lane run queue entry is malformed.");
+    }
+
+    const queuePath = path.join(queueRoot, entry.name);
+
+    if (!entry.isFile()) {
+      const stats = await lstat(queuePath);
+
+      if (!stats.isFile()) {
+        throw new Error("Lane run queue entry is malformed.");
+      }
+    }
+
+    records.push(await readLaneRunQueueRecord(stateRoot, stableWorkItemId));
+  }
+
+  records.sort((left, right) => {
+    const queuedComparison = compareIsoDateTimeInstants(left.queuedAt, right.queuedAt);
+
+    if (queuedComparison !== 0) {
+      return queuedComparison;
+    }
+
+    return compareStableWorkItemIds(left.stableWorkItemId, right.stableWorkItemId);
+  });
+
+  return records;
+}
+
+async function assertLaneRunLocksAreReferencedByQueue(
+  stateRoot: string,
+  queueRecords: readonly LaneRunQueueRecord[],
+): Promise<void> {
+  const queuedStableWorkItemIds = new Set(queueRecords.map((record) => record.stableWorkItemId));
+
+  for (const stableWorkItemId of await readLaneRunLockStableWorkItemIds(stateRoot)) {
+    await readLaneRunLock(stateRoot, stableWorkItemId);
+
+    if (!queuedStableWorkItemIds.has(stableWorkItemId)) {
+      throw new Error("Lane run lock entry is malformed.");
+    }
+  }
+}
+
+async function readLaneRunLockStableWorkItemIds(stateRoot: string): Promise<readonly string[]> {
+  const resolvedRoot = path.resolve(stateRoot);
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const lockRoot = path.join(resolvedRoot, "lane-run-locks");
+
+  await assertExistingPathSafe(realRoot, lockRoot, "directory");
+
+  const entries = await readdir(lockRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
+  const stableWorkItemIds: string[] = [];
+
+  for (const entry of entries) {
+    if (!entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const stableWorkItemId = entry.name.slice(0, -".json".length);
+
+    if (!isSafeStableWorkItemId(stableWorkItemId)) {
+      throw new Error("Lane run lock entry is malformed.");
+    }
+
+    const lockPath = path.join(lockRoot, entry.name);
+
+    if (!entry.isFile()) {
+      const stats = await lstat(lockPath);
+
+      if (!stats.isFile()) {
+        throw new Error("Lane run lock entry is malformed.");
+      }
+    }
+
+    stableWorkItemIds.push(stableWorkItemId);
+  }
+
+  return stableWorkItemIds;
+}
+
+function compareIsoDateTimeInstants(left: string, right: string): number {
+  return Date.parse(left) - Date.parse(right);
+}
+
+function compareStableWorkItemIds(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+
+  if (left > right) {
+    return 1;
+  }
+
+  return 0;
+}
+
+async function createLaneRunOperatorStatusItem(
+  stateRoot: string,
+  record: LaneRunQueueRecord,
+): Promise<LaneRunOperatorStatusItem> {
+  const effectiveLock = resolveOperatorEffectiveLock(
+    record,
+    await readOptionalLaneRunLock(stateRoot, record.stableWorkItemId),
+  );
+  const blockerReason = publicSafeDiagnosticText(record.metadata.blockerReason);
+  const verificationState = resolveOperatorVerificationState(record, effectiveLock, blockerReason);
+  const laneState =
+    blockerReason === undefined ? resolveOperatorLaneState(record, effectiveLock) : "blocked";
+
+  return {
+    selectedIssue: resolveSelectedIssue(record),
+    stableWorkItemId: record.stableWorkItemId,
+    laneId: record.laneId,
+    laneState,
+    verificationState,
+    blockerReason,
+    nextOperatorAction: resolveNextOperatorAction(record, effectiveLock, blockerReason),
+    activeLock:
+      effectiveLock === undefined
+        ? undefined
+        : {
+            laneRunId: effectiveLock.laneRunId,
+            status: effectiveLock.status,
+          },
+  };
+}
+
+function resolveSelectedIssue(record: LaneRunQueueRecord): string {
+  const issueNumber = record.metadata.issueNumber;
+
+  if (issueNumber !== undefined && /^[1-9][0-9]{0,8}$/.test(issueNumber)) {
+    return `#${issueNumber}`;
+  }
+
+  return record.stableWorkItemId;
+}
+
+function resolveOperatorLaneState(
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+): LaneRunQueueStatus | LaneRunLockStatus {
+  if (lock?.active === true) {
+    return "active";
+  }
+
+  if (lock !== undefined && lock.status !== "active") {
+    return lock.status;
+  }
+
+  return record.status;
+}
+
+function resolveOperatorEffectiveLock(
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+): LaneRunLock | undefined {
+  if (lock === undefined || lock.active === true) {
+    return lock;
+  }
+
+  if (isStaleQueueRecordForTerminalLock(record, lock)) {
+    return lock;
+  }
+
+  return undefined;
+}
+
+function resolveOperatorVerificationState(
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+  blockerReason: string | undefined,
+): LaneRunOperatorVerificationState {
+  if (blockerReason !== undefined) {
+    return "blocked";
+  }
+
+  if (lock?.status === "completed" || record.status === "completed") {
+    return "succeeded";
+  }
+
+  if (lock?.active === true) {
+    return "running";
+  }
+
+  if (record.status === "queued") {
+    return "not-started";
+  }
+
+  return "unknown";
+}
+
+function resolveNextOperatorAction(
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+  blockerReason: string | undefined,
+): string {
+  if (blockerReason !== undefined) {
+    return "resolve blocker before claiming or running the lane";
+  }
+
+  if (lock?.active === true) {
+    return `wait for active lane run ${lock.laneRunId} to finish`;
+  }
+
+  if (lock?.status === "completed") {
+    return "no action required";
+  }
+
+  if (lock?.status === "revoked") {
+    return "inspect revocation before rediscovery";
+  }
+
+  if (lock?.status === "superseded") {
+    return "enqueue a fresh lane run if this issue is still selected";
+  }
+
+  if (record.status === "queued") {
+    return "claim queued lane run when ready";
+  }
+
+  if (record.status === "completed") {
+    return "no action required";
+  }
+
+  if (record.status === "revoked") {
+    return "inspect revocation before rediscovery";
+  }
+
+  return "enqueue a fresh lane run if this issue is still selected";
+}
+
+function selectDefaultLaneRunExplanationItem(
+  queue: readonly LaneRunOperatorStatusItem[],
+): LaneRunOperatorStatusItem | undefined {
+  return (
+    queue.find((item) => isBlockedOperatorStatusItem(item)) ??
+    queue.find((item) => item.nextOperatorAction !== "no action required") ??
+    queue[0]
+  );
+}
+
+function isBlockedOperatorStatusItem(item: LaneRunOperatorStatusItem): boolean {
+  return (
+    item.laneState === "blocked" ||
+    item.laneState === "revoked" ||
+    item.laneState === "superseded"
+  );
+}
+
+function resolveBlockedOperatorStatusReason(item: LaneRunOperatorStatusItem): string {
+  if (item.blockerReason !== undefined) {
+    return item.blockerReason;
+  }
+
+  if (item.laneState === "revoked") {
+    return "lane run was revoked";
+  }
+
+  if (item.laneState === "superseded") {
+    return "lane run was superseded";
+  }
+
+  return "one or more lane runs are blocked";
+}
+
+function publicSafeDiagnosticText(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const sanitized = sanitizePublicDiagnosticMessage(value).replaceAll(
+    "<secret-like-value>",
+    "<redacted>",
+  );
+
+  if (containsUnsafePublicArtifactText(sanitized)) {
+    return "<redacted>";
+  }
+
+  return sanitized;
+}
+
+function createNoSelectedIssueExplanation(): LaneRunOperatorExplanation {
+  return {
+    schemaVersion: "ensen.lane-run-explain.v1",
+    state: "blocked",
+    laneState: "blocked",
+    verificationState: "unknown",
+    blockerReason: "no selected issue",
+    nextOperatorAction: "select or enqueue a lane run before claiming readiness",
+  };
+}
+
+function createRequestedIssueNotFoundExplanation(stableWorkItemId: string): LaneRunOperatorExplanation {
+  return {
+    schemaVersion: "ensen.lane-run-explain.v1",
+    state: "blocked",
+    selectedIssue: stableWorkItemId,
+    stableWorkItemId,
+    laneState: "blocked",
+    verificationState: "unknown",
+    blockerReason: "requested issue is not queued",
+    nextOperatorAction: "select an existing lane run or enqueue the requested issue before claiming readiness",
+  };
+}
+
+function createMalformedLaneRunStatus(): LaneRunOperatorStatus {
+  return {
+    schemaVersion: "ensen.lane-run-status.v1",
+    state: "blocked",
+    queue: [],
+    blockerReason: "lane run state is malformed",
+    nextOperatorAction: "repair or remove malformed lane state before continuing",
+  };
+}
+
+function createMalformedLaneRunExplanation(
+  stableWorkItemId: string | undefined,
+): LaneRunOperatorExplanation {
+  return {
+    schemaVersion: "ensen.lane-run-explain.v1",
+    state: "blocked",
+    stableWorkItemId,
+    laneState: "blocked",
+    verificationState: "unknown",
+    blockerReason: "lane run state is malformed",
+    nextOperatorAction: "repair or remove malformed lane state before continuing",
+  };
+}
+
+function isMalformedLaneRunStateError(error: unknown): boolean {
+  if (error instanceof SyntaxError) {
+    return true;
+  }
+
+  if (!(error instanceof Error)) {
+    return false;
+  }
+
+  if (
+    isNodeError(error) &&
+    typeof error.code === "string" &&
+    malformedLaneRunStateErrorCodes.has(error.code)
+  ) {
+    return true;
+  }
+
+  return (
+    /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message) ||
+    /^Lane run (?:queue record|lock|state) identifiers do not match the requested (?:work item|lane run)\.$/.test(
+      error.message,
+    ) ||
+    /^Lane run queue record diagnostics do not match authoritative queue state\.$/.test(error.message) ||
+    /^Configured state root must (?:exist|be a real directory)/.test(error.message) ||
+    /^Lane run state (?:paths|directory path|file path) must /.test(error.message) ||
+    /^Lane run (?:durable )?state file (?:path must|changed during access)/.test(error.message)
+  );
+}
+
+const malformedLaneRunStateErrorCodes = new Set(["EISDIR", "ENOTDIR"]);
 
 async function readOptionalLaneRunQueueRecord(
   stateRoot: string,
