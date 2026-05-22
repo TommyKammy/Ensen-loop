@@ -954,11 +954,14 @@ async function acquireLaneRunMutationLock(
   await assertExistingPathSafe(realRoot, lockRoot, "directory");
 
   for (let attempt = 0; attempt < 25; attempt += 1) {
+    let acquiredStats: Stats | undefined;
+
     try {
       await mkdir(lockPath, { mode: 0o700 });
+      acquiredStats = await lstat(lockPath);
       await assertExistingPathSafe(realRoot, lockPath, "directory");
       await writeLaneRunMutationLockOwner(realRoot, lockPath, owner);
-      const lockStats = await lstat(lockPath);
+      const lockStats = acquiredStats;
       const stopHeartbeat = startLaneRunMutationLockHeartbeat(lockPath);
 
       return async () => {
@@ -967,7 +970,10 @@ async function acquireLaneRunMutationLock(
       };
     } catch (error) {
       if (!isNodeError(error) || error.code !== "EEXIST") {
-        await rm(lockPath, { recursive: true, force: true });
+        if (acquiredStats) {
+          await removeCreatedLaneRunMutationLock(lockPath, owner.token, acquiredStats);
+        }
+
         throw error;
       }
 
@@ -982,6 +988,44 @@ async function acquireLaneRunMutationLock(
   }
 
   throw new Error("Lane run queue record is currently being modified; retry the lane run mutation.");
+}
+
+async function removeCreatedLaneRunMutationLock(
+  lockPath: string,
+  token: string,
+  acquiredStats: Stats,
+): Promise<void> {
+  const currentStats = await lstat(lockPath).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  });
+
+  if (!currentStats || !currentStats.isDirectory() || !sameFileStats(acquiredStats, currentStats)) {
+    return;
+  }
+
+  const ownerPath = path.join(lockPath, laneRunMutationLockOwnerFilename(token));
+
+  try {
+    await rm(ownerPath);
+  } catch (error) {
+    if (!isNodeError(error) || error.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  try {
+    await rmdir(lockPath);
+  } catch (error) {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENOTEMPTY")) {
+      return;
+    }
+
+    throw error;
+  }
 }
 
 function startLaneRunMutationLockHeartbeat(lockPath: string): () => void {
@@ -1027,11 +1071,33 @@ async function nextLaneRunQueueSequence(stateRoot: string, stableWorkItemId: str
 }
 
 function isStaleQueueRecordForTerminalLock(queueRecord: LaneRunQueueRecord, lock: LaneRunLock): boolean {
-  if (lock.status === "active" || lock.releasedAt === undefined || lock.queueRecordId !== queueRecord.id) {
+  if (lock.status === "active" || lock.releasedAt === undefined) {
     return false;
   }
 
-  return true;
+  if (lock.queueRecordId === queueRecord.id) {
+    return true;
+  }
+
+  const lockSequence = parseLaneRunQueueSequenceFromRecordId(lock.stableWorkItemId, lock.queueRecordId);
+
+  return lockSequence >= queueRecord.enqueueSequence;
+}
+
+function parseLaneRunQueueSequenceFromRecordId(stableWorkItemId: string, queueRecordId: string): number {
+  const prefix = `queue-${stableWorkItemId}-`;
+
+  if (!queueRecordId.startsWith(prefix)) {
+    throw new Error("Lane run lock queue record reference is malformed.");
+  }
+
+  const sequence = Number(queueRecordId.slice(prefix.length));
+
+  if (!Number.isSafeInteger(sequence) || sequence < 1) {
+    throw new Error("Lane run lock queue record sequence is malformed.");
+  }
+
+  return sequence;
 }
 
 function assertLaneRunCompletionTimestamp(claimedAt: string, completedAt: string): void {
