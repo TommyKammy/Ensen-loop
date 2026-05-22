@@ -228,6 +228,42 @@ export interface CompleteLaneRunLockInput {
   readonly terminalStatus: Exclude<LaneRunLockStatus, "active">;
 }
 
+export interface LaneRunOperatorActionInput {
+  readonly stableWorkItemId: string;
+  readonly laneRunId: string;
+  readonly reason: string;
+  readonly actedAt: string;
+}
+
+export interface LaneRunOperatorActionLineage {
+  readonly relationship: "revoked" | "retried" | "requeued";
+  readonly previousLaneRunId?: string;
+  readonly newQueueRecordId?: string;
+  readonly preservedEvidenceRefs: readonly string[];
+}
+
+export type LaneRunOperatorAction = "stop" | "retry" | "requeue";
+
+export type LaneRunOperatorActionResult =
+  | {
+      readonly ok: true;
+      readonly action: LaneRunOperatorAction;
+      readonly stableWorkItemId: string;
+      readonly laneRunId: string;
+      readonly queueRecord?: LaneRunQueueRecord;
+      readonly lock?: LaneRunLock;
+      readonly publicDiagnostics: LaneRunLockDiagnostics;
+      readonly lineage: LaneRunOperatorActionLineage;
+    }
+  | {
+      readonly ok: false;
+      readonly action: LaneRunOperatorAction;
+      readonly stableWorkItemId: string;
+      readonly laneRunId: string;
+      readonly publicDiagnostics: LaneRunLockDiagnostics;
+      readonly lineage: LaneRunOperatorActionLineage;
+    };
+
 export type ClaimQueuedLaneRunResult =
   | {
       readonly ok: true;
@@ -1078,6 +1114,148 @@ export async function completeLaneRunLock(
   });
 }
 
+export async function stopLaneRun(
+  stateRoot: string,
+  input: LaneRunOperatorActionInput,
+): Promise<LaneRunOperatorActionResult> {
+  validateLaneRunOperatorActionInput(input);
+
+  return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+    const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? "operator requested stop";
+
+    if (queueRecord === undefined) {
+      return createBlockedLaneRunOperatorActionResult("stop", input, undefined, "requested issue is not queued");
+    }
+
+    if (existingLock !== undefined && existingLock.laneRunId !== input.laneRunId) {
+      return createBlockedLaneRunOperatorActionResult(
+        "stop",
+        input,
+        existingLock,
+        "operator action target does not match the selected lane run",
+      );
+    }
+
+    if (existingLock?.active === true) {
+      assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.actedAt);
+
+      const revokedLock = toSerializableLaneRunLock({
+        ...existingLock,
+        status: "revoked",
+        active: false,
+        releasedAt: input.actedAt,
+      });
+      const revokedQueueRecord = toSerializableLaneRunQueueRecord({
+        ...queueRecord,
+        status: "revoked",
+        updatedAt: input.actedAt,
+        metadata: {
+          ...queueRecord.metadata,
+          operatorAction: "stop",
+          operatorReason: sanitizedReason,
+          revokedByOperatorAt: input.actedAt,
+          revokedLaneRunId: existingLock.laneRunId,
+        },
+        publicDiagnostics: {
+          ...queueRecord.publicDiagnostics,
+          status: "revoked",
+        },
+      });
+
+      await persistCompletedLaneRunState(stateRoot, existingLock, revokedLock, revokedQueueRecord);
+
+      return {
+        ok: true,
+        action: "stop",
+        stableWorkItemId: input.stableWorkItemId,
+        laneRunId: input.laneRunId,
+        queueRecord: revokedQueueRecord,
+        lock: revokedLock,
+        publicDiagnostics: createLaneRunLockDiagnostics(revokedLock, sanitizedReason),
+        lineage: {
+          relationship: "revoked",
+          previousLaneRunId: existingLock.laneRunId,
+          preservedEvidenceRefs: await readLaneRunEvidenceRefs(stateRoot, existingLock.laneRunId),
+        },
+      };
+    }
+
+    if (existingLock !== undefined) {
+      return createBlockedLaneRunOperatorActionResult(
+        "stop",
+        input,
+        existingLock,
+        `lane run is already terminal: ${existingLock.status}`,
+      );
+    }
+
+    if (queueRecord.status !== "queued" || queueRecord.metadata.blockerReason === undefined) {
+      return createBlockedLaneRunOperatorActionResult(
+        "stop",
+        input,
+        createDiagnosticsLockFromQueueRecord(queueRecord, input.laneRunId, "active"),
+        "only active or blocked lane runs can be stopped",
+      );
+    }
+
+    const revokedQueueRecord = toSerializableLaneRunQueueRecord({
+      ...queueRecord,
+      status: "revoked",
+      updatedAt: input.actedAt,
+      metadata: {
+        ...queueRecord.metadata,
+        operatorAction: "stop",
+        operatorReason: sanitizedReason,
+        revokedByOperatorAt: input.actedAt,
+        revokedLaneRunId: input.laneRunId,
+      },
+      publicDiagnostics: {
+        ...queueRecord.publicDiagnostics,
+        status: "revoked",
+      },
+    });
+
+    await writeLaneRunQueueRecord(stateRoot, revokedQueueRecord);
+
+    return {
+      ok: true,
+      action: "stop",
+      stableWorkItemId: input.stableWorkItemId,
+      laneRunId: input.laneRunId,
+      queueRecord: revokedQueueRecord,
+      publicDiagnostics: createLaneRunLockDiagnostics(
+        createDiagnosticsLockFromQueueRecord(revokedQueueRecord, input.laneRunId, "revoked", input.actedAt),
+        sanitizedReason,
+      ),
+      lineage: {
+        relationship: "revoked",
+        previousLaneRunId: input.laneRunId,
+        preservedEvidenceRefs: await readLaneRunEvidenceRefs(stateRoot, input.laneRunId),
+      },
+    };
+  });
+}
+
+export async function retryLaneRun(
+  stateRoot: string,
+  input: LaneRunOperatorActionInput,
+): Promise<LaneRunOperatorActionResult> {
+  validateLaneRunOperatorActionInput(input);
+
+  return createLinkedQueuedOperatorAttempt(stateRoot, input, "retry");
+}
+
+export async function requeueLaneRun(
+  stateRoot: string,
+  input: LaneRunOperatorActionInput,
+): Promise<LaneRunOperatorActionResult> {
+  validateLaneRunOperatorActionInput(input);
+
+  return createLinkedQueuedOperatorAttempt(stateRoot, input, "requeue");
+}
+
 async function persistCompletedLaneRunState(
   stateRoot: string,
   previousLock: LaneRunLock,
@@ -1093,6 +1271,230 @@ async function persistCompletedLaneRunState(
       await writeLaneRunLock(stateRoot, previousLock);
     } catch (rollbackError) {
       throw new AggregateError([error, rollbackError], "Lane run completion failed and lock rollback failed.");
+    }
+
+    throw error;
+  }
+}
+
+async function createLinkedQueuedOperatorAttempt(
+  stateRoot: string,
+  input: LaneRunOperatorActionInput,
+  action: "retry" | "requeue",
+): Promise<LaneRunOperatorActionResult> {
+  return withLaneRunMutationLock(stateRoot, input.stableWorkItemId, async () => {
+    const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+    const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    const relationship = action === "retry" ? "retried" : "requeued";
+
+    if (queueRecord === undefined) {
+      return createBlockedLaneRunOperatorActionResult(action, input, undefined, "requested issue is not queued");
+    }
+
+    const diagnosticsLock = existingLock ?? createDiagnosticsLockFromQueueRecord(queueRecord, input.laneRunId, "active");
+
+    if (existingLock === undefined) {
+      const eligibleBlockedQueue = action === "requeue" && queueRecord.status === "revoked";
+
+      if (!eligibleBlockedQueue) {
+        return createBlockedLaneRunOperatorActionResult(
+          action,
+          input,
+          diagnosticsLock,
+          "operator action requires a terminal lane run record",
+        );
+      }
+    }
+
+    if (existingLock !== undefined && existingLock.laneRunId !== input.laneRunId) {
+      return createBlockedLaneRunOperatorActionResult(
+        action,
+        input,
+        existingLock,
+        "operator action target does not match the selected lane run",
+      );
+    }
+
+    if (existingLock?.active === true) {
+      return createBlockedLaneRunOperatorActionResult(
+        action,
+        input,
+        existingLock,
+        `cannot ${action} an active lane run; stop it first`,
+      );
+    }
+
+    if (action === "requeue" && queueRecord.status !== "revoked" && queueRecord.status !== "superseded") {
+      return createBlockedLaneRunOperatorActionResult(
+        action,
+        input,
+        diagnosticsLock,
+        "only revoked or superseded lane runs can be requeued",
+      );
+    }
+
+    const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, input.laneRunId);
+    const enqueueSequence = queueRecord.enqueueSequence + 1;
+    const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? `operator requested ${action}`;
+    const { blockerReason: _blockedReason, ...linkedMetadata } = queueRecord.metadata;
+    const operatorMetadata = {
+      ...linkedMetadata,
+      operatorAction: action,
+      operatorReason: sanitizedReason,
+      previousQueueRecordId: queueRecord.id,
+      previousQueueStatus: queueRecord.status,
+      [`${action}OfLaneRunId`]: input.laneRunId,
+      ...(preservedEvidenceRefs.length > 0
+        ? { preservedEvidenceRefs: preservedEvidenceRefs.join(",") }
+        : {}),
+    };
+    const nextQueueRecord = toSerializableLaneRunQueueRecord({
+      schemaVersion: "ensen.lane-run-queue.v1",
+      id: `queue-${input.stableWorkItemId}-${enqueueSequence}`,
+      enqueueSequence,
+      stableWorkItemId: queueRecord.stableWorkItemId,
+      workItemId: queueRecord.workItemId,
+      source: queueRecord.source,
+      laneId: queueRecord.laneId,
+      repositoryClassification: queueRecord.repositoryClassification,
+      status: "queued",
+      queuedAt: input.actedAt,
+      updatedAt: input.actedAt,
+      startsAgentExecution: false,
+      metadata: operatorMetadata,
+      publicDiagnostics: {
+        stableWorkItemId: queueRecord.stableWorkItemId,
+        laneId: queueRecord.laneId,
+        source: queueRecord.source,
+        repositoryClassification: queueRecord.repositoryClassification,
+        status: "queued",
+      },
+    });
+
+    await writeLaneRunQueueRecord(stateRoot, nextQueueRecord);
+
+    return {
+      ok: true,
+      action,
+      stableWorkItemId: input.stableWorkItemId,
+      laneRunId: input.laneRunId,
+      queueRecord: nextQueueRecord,
+      lock: existingLock,
+      publicDiagnostics: createLaneRunLockDiagnostics(diagnosticsLock, sanitizedReason),
+      lineage: {
+        relationship,
+        previousLaneRunId: input.laneRunId,
+        newQueueRecordId: nextQueueRecord.id,
+        preservedEvidenceRefs,
+      },
+    };
+  });
+}
+
+function validateLaneRunOperatorActionInput(input: LaneRunOperatorActionInput): void {
+  assertSafeStableWorkItemId(input.stableWorkItemId);
+
+  if (!isLaneRunId(input.laneRunId) || !isNonEmptyString(input.reason) || !isIsoDateTime(input.actedAt)) {
+    throw new Error("Lane run operator action input is malformed.");
+  }
+
+  assertLaneRunClaimTimestamp(input.actedAt);
+}
+
+function createBlockedLaneRunOperatorActionResult(
+  action: LaneRunOperatorAction,
+  input: LaneRunOperatorActionInput,
+  lock: LaneRunLock | undefined,
+  reason: string,
+): LaneRunOperatorActionResult {
+  const diagnosticsLock =
+    lock ??
+    createDiagnosticsLockFromQueueRecord(
+      {
+        schemaVersion: "ensen.lane-run-queue.v1",
+        id: `queue-${input.stableWorkItemId}-1`,
+        enqueueSequence: 1,
+        stableWorkItemId: input.stableWorkItemId,
+        workItemId: input.stableWorkItemId,
+        source: "unknown",
+        laneId: "unknown",
+        repositoryClassification: "owner-controlled-dogfood",
+        status: "queued",
+        queuedAt: input.actedAt,
+        updatedAt: input.actedAt,
+        startsAgentExecution: false,
+        metadata: {},
+        publicDiagnostics: {
+          stableWorkItemId: input.stableWorkItemId,
+          laneId: "unknown",
+          source: "unknown",
+          repositoryClassification: "owner-controlled-dogfood",
+          status: "queued",
+        },
+      },
+      input.laneRunId,
+      "active",
+    );
+
+  return {
+    ok: false,
+    action,
+    stableWorkItemId: input.stableWorkItemId,
+    laneRunId: input.laneRunId,
+    publicDiagnostics: createLaneRunLockDiagnostics(diagnosticsLock, publicSafeDiagnosticText(reason) ?? reason),
+    lineage: {
+      relationship: action === "stop" ? "revoked" : action === "retry" ? "retried" : "requeued",
+      previousLaneRunId: input.laneRunId,
+      preservedEvidenceRefs: [],
+    },
+  };
+}
+
+function createDiagnosticsLockFromQueueRecord(
+  record: LaneRunQueueRecord,
+  laneRunId: string,
+  status: LaneRunLockStatus,
+  releasedAt?: string,
+): LaneRunLock {
+  const active = status === "active";
+  const base = {
+    schemaVersion: "ensen.lane-run-lock.v1",
+    stableWorkItemId: record.stableWorkItemId,
+    queueRecordId: record.id,
+    laneRunId,
+    laneId: record.laneId,
+    source: record.source,
+    repositoryClassification: record.repositoryClassification,
+    status,
+    active,
+    claimedAt: record.updatedAt,
+    claimedBy: "operator",
+    startsAgentExecution: false,
+  } satisfies Omit<LaneRunLock, "releasedAt">;
+
+  return releasedAt === undefined || active
+    ? base
+    : {
+        ...base,
+        releasedAt,
+      };
+}
+
+async function readLaneRunEvidenceRefs(stateRoot: string, laneRunId: string): Promise<readonly string[]> {
+  const state = await readOptionalLaneRunState(stateRoot, laneRunId);
+
+  return state?.evidence.bundleRefs ?? [];
+}
+
+async function readOptionalLaneRunState(
+  stateRoot: string,
+  laneRunId: string,
+): Promise<LaneRunState | undefined> {
+  try {
+    return await readLaneRunState(stateRoot, laneRunId);
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
     }
 
     throw error;

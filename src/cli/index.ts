@@ -17,6 +17,9 @@ import {
   explainLaneRun,
   getLaneRunStatus,
   prepareLocalLaneWorkspace,
+  requeueLaneRun,
+  retryLaneRun,
+  stopLaneRun,
 } from "../lane/index.js";
 import {
   createBlockedRunResultFromValidationIssues,
@@ -278,6 +281,43 @@ async function main(): Promise<number> {
     return explanation.state === "ok" ? 0 : 1;
   }
 
+  if (command === "stop" || command === "retry" || command === "requeue") {
+    const options = parseOperatorActionArgs(args);
+
+    if (options === undefined) {
+      console.error(
+        `Usage: ensen-loop ${command} --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>`,
+      );
+      return 1;
+    }
+
+    const actedAt = new Date().toISOString();
+    const result =
+      command === "stop"
+        ? await stopLaneRun(options.stateRoot, {
+            stableWorkItemId: options.stableWorkItemId,
+            laneRunId: options.laneRunId,
+            reason: options.reason,
+            actedAt,
+          })
+        : command === "retry"
+          ? await retryLaneRun(options.stateRoot, {
+              stableWorkItemId: options.stableWorkItemId,
+              laneRunId: options.laneRunId,
+              reason: options.reason,
+              actedAt,
+            })
+          : await requeueLaneRun(options.stateRoot, {
+              stableWorkItemId: options.stableWorkItemId,
+              laneRunId: options.laneRunId,
+              reason: options.reason,
+              actedAt,
+            });
+
+    printJson(result);
+    return result.ok ? 0 : 1;
+  }
+
   if (command === undefined) {
     console.log(describeProduct());
     return 0;
@@ -294,6 +334,9 @@ async function main(): Promise<number> {
   );
   console.error("Usage: ensen-loop status --state-root <state-root>");
   console.error("Usage: ensen-loop explain --state-root <state-root> [--issue <stable-work-item-id>]");
+  console.error(
+    "Usage: ensen-loop stop|retry|requeue --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>",
+  );
   return 1;
 }
 
@@ -444,6 +487,54 @@ function parseExplainArgs(args: readonly string[]): ExplainOptions | undefined {
   return {
     stateRoot: args[1],
     stableWorkItemId: args[3],
+  };
+}
+
+interface OperatorActionOptions {
+  readonly stateRoot: string;
+  readonly stableWorkItemId: string;
+  readonly laneRunId: string;
+  readonly reason: string;
+}
+
+function parseOperatorActionArgs(args: readonly string[]): OperatorActionOptions | undefined {
+  if (args.length !== 8) {
+    return undefined;
+  }
+
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+
+    if (flag === undefined || value === undefined || !flag.startsWith("--")) {
+      return undefined;
+    }
+
+    values.set(flag, value);
+  }
+
+  const stateRoot = values.get("--state-root");
+  const stableWorkItemId = values.get("--issue");
+  const laneRunId = values.get("--lane-run");
+  const reason = values.get("--reason");
+
+  if (
+    stateRoot === undefined ||
+    stableWorkItemId === undefined ||
+    laneRunId === undefined ||
+    reason === undefined ||
+    values.size !== 4
+  ) {
+    return undefined;
+  }
+
+  return {
+    stateRoot,
+    stableWorkItemId,
+    laneRunId,
+    reason,
   };
 }
 
