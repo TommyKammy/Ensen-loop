@@ -1,3 +1,4 @@
+import { Dirent } from "node:fs";
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import {
   enqueueLaneRun,
   explainLaneRun,
   getLaneRunStatus,
+  resolveLaneRunLockPath,
   resolveLaneRunQueueRecordPath,
 } from "../src/lane/index.js";
 
@@ -463,6 +465,128 @@ test("status orders queue records by timestamp instant before stable id", async 
       ["#111", "#112"],
     );
     assert.equal(explanation.selectedIssue, "#111");
+  });
+});
+
+test("status orders equal-time queue records by locale-independent stable id", async () => {
+  await withStateRoot(async (stateRoot) => {
+    for (const stableWorkItemId of [
+      "github_issue_111",
+      "github.issue.111",
+      "github-issue-111",
+    ]) {
+      await enqueueLaneRun(stateRoot, {
+        stableWorkItemId,
+        workItemId: stableWorkItemId,
+        source: "github-issue",
+        laneId: "owner-dogfood",
+        repositoryClassification: "owner-controlled-dogfood",
+        queuedAt,
+      });
+    }
+
+    const status = await getLaneRunStatus(stateRoot);
+
+    assert.deepEqual(
+      status.queue.map((item) => item.stableWorkItemId),
+      ["github-issue-111", "github.issue.111", "github_issue_111"],
+    );
+  });
+});
+
+test("queue scan falls back to file stats when dirent file type is unknown", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const originalIsFile = Dirent.prototype.isFile;
+    Dirent.prototype.isFile = function isUnknownFileType() {
+      return false;
+    };
+
+    try {
+      const status = await getLaneRunStatus(stateRoot);
+
+      assert.equal(status.state, "ok");
+      assert.equal(status.queue[0]?.stableWorkItemId, "github-issue-111");
+    } finally {
+      Dirent.prototype.isFile = originalIsFile;
+    }
+  });
+});
+
+test("queue filename and content id mismatches are reported as malformed state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const mismatchedQueuePath = resolveLaneRunQueueRecordPath(stateRoot, "github-issue-111");
+    await writeFile(mismatchedQueuePath, `${JSON.stringify(queued)}\n`, {
+      encoding: "utf8",
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+  });
+});
+
+test("lock filename and content id mismatches are reported as malformed state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const queued = await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    const lockPath = resolveLaneRunLockPath(stateRoot, "github-issue-111");
+    await mkdir(path.dirname(lockPath), { recursive: true });
+    await writeFile(
+      lockPath,
+      `${JSON.stringify({
+        schemaVersion: "ensen.lane-run-lock.v1",
+        stableWorkItemId: "github-issue-112",
+        queueRecordId: queued.id,
+        laneRunId: "lane-run-111-a",
+        laneId: "owner-dogfood",
+        source: "github-issue",
+        repositoryClassification: "owner-controlled-dogfood",
+        status: "active",
+        active: true,
+        claimedAt,
+        claimedBy: "local-supervisor",
+        startsAgentExecution: false,
+      })}\n`,
+      { encoding: "utf8" },
+    );
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
   });
 });
 

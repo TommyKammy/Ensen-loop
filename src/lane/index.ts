@@ -1522,14 +1522,20 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
       continue;
     }
 
-    if (!entry.isFile()) {
-      throw new Error("Lane run queue entry is malformed.");
-    }
-
     const stableWorkItemId = entry.name.slice(0, -".json".length);
 
     if (!isSafeStableWorkItemId(stableWorkItemId)) {
       throw new Error("Lane run queue entry is malformed.");
+    }
+
+    const queuePath = path.join(queueRoot, entry.name);
+
+    if (!entry.isFile()) {
+      const stats = await lstat(queuePath);
+
+      if (!stats.isFile()) {
+        throw new Error("Lane run queue entry is malformed.");
+      }
     }
 
     records.push(await readLaneRunQueueRecord(stateRoot, stableWorkItemId));
@@ -1542,7 +1548,7 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
       return queuedComparison;
     }
 
-    return left.stableWorkItemId.localeCompare(right.stableWorkItemId);
+    return compareStableWorkItemIds(left.stableWorkItemId, right.stableWorkItemId);
   });
 
   return records;
@@ -1550,6 +1556,18 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
 
 function compareIsoDateTimeInstants(left: string, right: string): number {
   return Date.parse(left) - Date.parse(right);
+}
+
+function compareStableWorkItemIds(left: string, right: string): number {
+  if (left < right) {
+    return -1;
+  }
+
+  if (left > right) {
+    return 1;
+  }
+
+  return 0;
 }
 
 async function createLaneRunOperatorStatusItem(
@@ -1805,6 +1823,10 @@ function isMalformedLaneRunStateError(error: unknown): boolean {
 
   return (
     /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message) ||
+    /^Lane run (?:queue record|lock|state) identifiers do not match the requested (?:work item|lane run)\.$/.test(
+      error.message,
+    ) ||
+    /^Lane run queue record diagnostics do not match authoritative queue state\.$/.test(error.message) ||
     /^Configured state root must (?:exist|be a real directory)/.test(error.message) ||
     /^Lane run state (?:paths|directory path|file path) must /.test(error.message) ||
     /^Lane run (?:durable )?state file (?:path must|changed during access)/.test(error.message)
