@@ -1139,6 +1139,15 @@ export async function stopLaneRun(
     }
 
     if (existingLock?.active === true) {
+      if (queueRecord.id !== existingLock.queueRecordId) {
+        return createBlockedLaneRunOperatorActionResult(
+          "stop",
+          input,
+          existingLock,
+          "lane run queue record does not match the active lane run lock",
+        );
+      }
+
       assertLaneRunCompletionTimestamp(existingLock.claimedAt, input.actedAt);
 
       const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, existingLock.laneRunId);
@@ -1222,7 +1231,7 @@ export async function stopLaneRun(
       status: "revoked",
       updatedAt: input.actedAt,
       metadata: {
-        ...queueRecord.metadata,
+        ...copyQueueMetadataWithout(queueRecord.metadata, ["blockerReason"]),
         operatorAction: "stop",
         operatorReason: sanitizedReason,
         revokedByOperatorAt: input.actedAt,
@@ -1369,7 +1378,11 @@ async function createLinkedQueuedOperatorAttempt(
     const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, input.laneRunId);
     const enqueueSequence = queueRecord.enqueueSequence + 1;
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? `operator requested ${action}`;
-    const { blockerReason: _blockedReason, ...linkedMetadata } = queueRecord.metadata;
+    const linkedMetadata = copyQueueMetadataWithout(queueRecord.metadata, [
+      "blockerReason",
+      "preservedEvidenceRefCount",
+      "preservedEvidenceRefs",
+    ]);
     const operatorMetadata = {
       ...linkedMetadata,
       operatorAction: action,
@@ -1547,6 +1560,19 @@ function createPreservedEvidenceQueueMetadata(
     : {
         preservedEvidenceRefCount: String(preservedEvidenceRefs.length),
       };
+}
+
+function copyQueueMetadataWithout(
+  metadata: Record<string, string>,
+  keys: readonly string[],
+): Record<string, string> {
+  const copiedMetadata = { ...metadata };
+
+  for (const key of keys) {
+    delete copiedMetadata[key];
+  }
+
+  return copiedMetadata;
 }
 
 async function readOptionalLaneRunState(
