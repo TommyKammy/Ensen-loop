@@ -244,6 +244,13 @@ export interface LaneRunOperatorActionLineage {
 
 export type LaneRunOperatorAction = "stop" | "retry" | "requeue";
 
+const blockedLaneRunMetadataKeys = ["blockerReason"] as const;
+const linkedAttemptVolatileMetadataKeys = [
+  "blockerReason",
+  "preservedEvidenceRefCount",
+  "preservedEvidenceRefs",
+] as const;
+
 export type LaneRunOperatorActionResult =
   | {
       readonly ok: true;
@@ -1124,7 +1131,7 @@ export async function stopLaneRun(
     const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? "operator requested stop";
-    const metadataReason = toLaneRunQueueMetadataValue(sanitizedReason);
+    const metadataReason = toBoundedLaneRunQueueMetadataValue(sanitizedReason);
 
     if (queueRecord === undefined) {
       return createBlockedLaneRunOperatorActionResult("stop", input, undefined, "requested issue is not queued");
@@ -1163,7 +1170,7 @@ export async function stopLaneRun(
         status: "revoked",
         updatedAt: input.actedAt,
         metadata: {
-          ...copyQueueMetadataWithout(queueRecord.metadata, ["blockerReason"]),
+          ...copyQueueMetadataWithout(queueRecord.metadata, blockedLaneRunMetadataKeys),
           operatorAction: "stop",
           operatorReason: metadataReason,
           revokedByOperatorAt: input.actedAt,
@@ -1232,7 +1239,7 @@ export async function stopLaneRun(
       status: "revoked",
       updatedAt: input.actedAt,
       metadata: {
-        ...copyQueueMetadataWithout(queueRecord.metadata, ["blockerReason"]),
+        ...copyQueueMetadataWithout(queueRecord.metadata, blockedLaneRunMetadataKeys),
         operatorAction: "stop",
         operatorReason: metadataReason,
         revokedByOperatorAt: input.actedAt,
@@ -1389,12 +1396,8 @@ async function createLinkedQueuedOperatorAttempt(
     const preservedEvidenceRefs = await readLaneRunEvidenceRefs(stateRoot, input.laneRunId);
     const enqueueSequence = queueRecord.enqueueSequence + 1;
     const sanitizedReason = publicSafeDiagnosticText(input.reason) ?? `operator requested ${action}`;
-    const metadataReason = toLaneRunQueueMetadataValue(sanitizedReason);
-    const linkedMetadata = copyQueueMetadataWithout(queueRecord.metadata, [
-      "blockerReason",
-      "preservedEvidenceRefCount",
-      "preservedEvidenceRefs",
-    ]);
+    const metadataReason = toBoundedLaneRunQueueMetadataValue(sanitizedReason);
+    const linkedMetadata = copyQueueMetadataWithout(queueRecord.metadata, linkedAttemptVolatileMetadataKeys);
     const operatorMetadata = {
       ...linkedMetadata,
       operatorAction: action,
@@ -1580,7 +1583,7 @@ function createPreservedEvidenceQueueMetadata(
       };
 }
 
-function toLaneRunQueueMetadataValue(value: string): string {
+function toBoundedLaneRunQueueMetadataValue(value: string): string {
   return value.length <= 256 ? value : `${value.slice(0, 253)}...`;
 }
 

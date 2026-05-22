@@ -456,6 +456,67 @@ test("requeue returns a revoked work item to the queue with lineage", async () =
   });
 });
 
+test("requeue writes bounded operator metadata and drops stale blocker lineage", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await stopLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator stop before requeue",
+      actedAt,
+    });
+
+    const revokedQueue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-112"),
+      `${JSON.stringify(
+        {
+          ...revokedQueue,
+          metadata: {
+            ...revokedQueue.metadata,
+            blockerReason: "stale blocked projection",
+            preservedEvidenceRefCount: "7",
+            preservedEvidenceRefs: "artifacts/evidence/stale.json",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await requeueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: `operator requeue ${"x".repeat(300)}`,
+      actedAt,
+    });
+
+    assert.equal(result.ok, true);
+
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+    assert.equal(queue.status, "queued");
+    assert.equal(queue.metadata.operatorReason.length, 256);
+    assert.equal(queue.metadata.operatorReason.endsWith("..."), true);
+    assert.equal(Object.hasOwn(queue.metadata, "blockerReason"), false);
+    assert.equal(Object.hasOwn(queue.metadata, "preservedEvidenceRefCount"), false);
+    assert.equal(Object.hasOwn(queue.metadata, "preservedEvidenceRefs"), false);
+  });
+});
+
 test("requeue without a lock requires verified revoked lane state ownership", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
