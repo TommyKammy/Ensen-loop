@@ -14,6 +14,8 @@ import {
 } from "../executor/index.js";
 import type { LocalFakeExecutorOutcome } from "../executor/index.js";
 import {
+  explainLaneRun,
+  getLaneRunStatus,
   prepareLocalLaneWorkspace,
 } from "../lane/index.js";
 import {
@@ -246,6 +248,36 @@ async function main(): Promise<number> {
     return runResult.status === "succeeded" ? 0 : 1;
   }
 
+  if (command === "status") {
+    const options = parseStatusArgs(args);
+
+    if (options === undefined) {
+      console.error("Usage: ensen-loop status --state-root <state-root>");
+      return 1;
+    }
+
+    const status = await getLaneRunStatus(options.stateRoot);
+
+    printJson(status);
+    return status.state === "ok" ? 0 : 1;
+  }
+
+  if (command === "explain") {
+    const options = parseExplainArgs(args);
+
+    if (options === undefined) {
+      console.error("Usage: ensen-loop explain --state-root <state-root> [--issue <stable-work-item-id>]");
+      return 1;
+    }
+
+    const explanation = await explainLaneRun(options.stateRoot, {
+      stableWorkItemId: options.stableWorkItemId,
+    });
+
+    printJson(explanation);
+    return explanation.state === "ok" ? 0 : 1;
+  }
+
   if (command === undefined) {
     console.log(describeProduct());
     return 0;
@@ -260,6 +292,8 @@ async function main(): Promise<number> {
   console.error(
     "Usage: ensen-loop x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root> [--fixture succeeded|failed|blocked]",
   );
+  console.error("Usage: ensen-loop status --state-root <state-root>");
+  console.error("Usage: ensen-loop explain --state-root <state-root> [--issue <stable-work-item-id>]");
   return 1;
 }
 
@@ -366,6 +400,50 @@ function parseXGate3SmokeArgs(args: readonly string[]): XGate3SmokeOptions | und
     workspaceRoot,
     stateRoot,
     fixture,
+  };
+}
+
+interface StatusOptions {
+  readonly stateRoot: string;
+}
+
+function parseStatusArgs(args: readonly string[]): StatusOptions | undefined {
+  if (args.length !== 2 || args[0] !== "--state-root" || args[1] === undefined) {
+    return undefined;
+  }
+
+  return {
+    stateRoot: args[1],
+  };
+}
+
+interface ExplainOptions {
+  readonly stateRoot: string;
+  readonly stableWorkItemId?: string;
+}
+
+function parseExplainArgs(args: readonly string[]): ExplainOptions | undefined {
+  if (args.length !== 2 && args.length !== 4) {
+    return undefined;
+  }
+
+  if (args[0] !== "--state-root" || args[1] === undefined) {
+    return undefined;
+  }
+
+  if (args.length === 2) {
+    return {
+      stateRoot: args[1],
+    };
+  }
+
+  if (args[2] !== "--issue" || args[3] === undefined) {
+    return undefined;
+  }
+
+  return {
+    stateRoot: args[1],
+    stableWorkItemId: args[3],
   };
 }
 
