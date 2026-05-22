@@ -1556,13 +1556,14 @@ async function createLaneRunOperatorStatusItem(
   stateRoot: string,
   record: LaneRunQueueRecord,
 ): Promise<LaneRunOperatorStatusItem> {
-  const lock = resolveOperatorProjectionLock(
+  const effectiveLock = resolveOperatorEffectiveLock(
     record,
     await readOptionalLaneRunLock(stateRoot, record.stableWorkItemId),
   );
   const blockerReason = publicSafeDiagnosticText(record.metadata.blockerReason);
-  const verificationState = resolveOperatorVerificationState(record, lock, blockerReason);
-  const laneState = blockerReason === undefined ? resolveOperatorLaneState(record, lock) : "blocked";
+  const verificationState = resolveOperatorVerificationState(record, effectiveLock, blockerReason);
+  const laneState =
+    blockerReason === undefined ? resolveOperatorLaneState(record, effectiveLock) : "blocked";
 
   return {
     selectedIssue: resolveSelectedIssue(record),
@@ -1571,13 +1572,13 @@ async function createLaneRunOperatorStatusItem(
     laneState,
     verificationState,
     blockerReason,
-    nextOperatorAction: resolveNextOperatorAction(record, lock, blockerReason),
+    nextOperatorAction: resolveNextOperatorAction(record, effectiveLock, blockerReason),
     activeLock:
-      lock === undefined
+      effectiveLock === undefined
         ? undefined
         : {
-            laneRunId: lock.laneRunId,
-            status: lock.status,
+            laneRunId: effectiveLock.laneRunId,
+            status: effectiveLock.status,
           },
   };
 }
@@ -1607,7 +1608,7 @@ function resolveOperatorLaneState(
   return record.status;
 }
 
-function resolveOperatorProjectionLock(
+function resolveOperatorEffectiveLock(
   record: LaneRunQueueRecord,
   lock: LaneRunLock | undefined,
 ): LaneRunLock | undefined {
@@ -1615,7 +1616,11 @@ function resolveOperatorProjectionLock(
     return lock;
   }
 
-  return isStaleQueueRecordForTerminalLock(record, lock) ? lock : undefined;
+  if (isStaleQueueRecordForTerminalLock(record, lock)) {
+    return lock;
+  }
+
+  return undefined;
 }
 
 function resolveOperatorVerificationState(
@@ -1790,6 +1795,14 @@ function isMalformedLaneRunStateError(error: unknown): boolean {
     return false;
   }
 
+  if (
+    isNodeError(error) &&
+    typeof error.code === "string" &&
+    malformedLaneRunStateErrorCodes.has(error.code)
+  ) {
+    return true;
+  }
+
   return (
     /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message) ||
     /^Configured state root must (?:exist|be a real directory)/.test(error.message) ||
@@ -1797,6 +1810,8 @@ function isMalformedLaneRunStateError(error: unknown): boolean {
     /^Lane run (?:durable )?state file (?:path must|changed during access)/.test(error.message)
   );
 }
+
+const malformedLaneRunStateErrorCodes = new Set(["EISDIR", "ENOTDIR"]);
 
 async function readOptionalLaneRunQueueRecord(
   stateRoot: string,

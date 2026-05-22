@@ -311,6 +311,26 @@ test("queue filesystem shape errors are reported as malformed status and explana
   });
 });
 
+test("state root filesystem shape errors are reported as malformed status and explanation", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const stateRootFile = path.join(stateRoot, "state-root-file");
+    await writeFile(stateRootFile, "not a directory\n", {
+      encoding: "utf8",
+    });
+    const malformedStateRoot = path.join(stateRootFile, "child");
+
+    const status = await getLaneRunStatus(malformedStateRoot);
+    const explanation = await explainLaneRun(malformedStateRoot);
+
+    assert.equal(status.state, "blocked");
+    assert.equal(status.queue.length, 0);
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
 test("CLI status returns structured blocked output for malformed queue shape", async () => {
   await withStateRoot(async (stateRoot) => {
     await writeFile(path.join(stateRoot, "lane-run-queue"), "not a directory\n", {
