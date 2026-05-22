@@ -19,6 +19,12 @@ const execFileAsync = promisify(execFile);
 const queuedAt = "2026-05-22T00:00:00.000Z";
 const claimedAt = "2026-05-22T00:01:00.000Z";
 
+interface CliResult {
+  readonly stdout: string;
+  readonly stderr: string;
+  readonly exitCode: number;
+}
+
 async function withStateRoot(callback: (stateRoot: string) => Promise<void>): Promise<void> {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
 
@@ -27,6 +33,37 @@ async function withStateRoot(callback: (stateRoot: string) => Promise<void>): Pr
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
   }
+}
+
+async function execCli(args: readonly string[]): Promise<CliResult> {
+  try {
+    const result = await execFileAsync(process.execPath, ["dist/src/cli/index.js", ...args]);
+
+    return {
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: 0,
+    };
+  } catch (error) {
+    if (isCliExitError(error)) {
+      return {
+        stdout: error.stdout,
+        stderr: error.stderr,
+        exitCode: error.code,
+      };
+    }
+
+    throw error;
+  }
+}
+
+function isCliExitError(error: unknown): error is Error & { readonly code: number; readonly stdout: string; readonly stderr: string } {
+  return (
+    error instanceof Error &&
+    typeof (error as { readonly code?: unknown }).code === "number" &&
+    typeof (error as { readonly stdout?: unknown }).stdout === "string" &&
+    typeof (error as { readonly stderr?: unknown }).stderr === "string"
+  );
 }
 
 test("status shows queued and active lock state without leaking local paths", async () => {
@@ -150,6 +187,31 @@ test("explain identifies blocked active lane run and safe next action", async ()
   });
 });
 
+test("CLI status exits blocked for queued blocker diagnostics", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "111",
+        blockerReason: "required review evidence is missing",
+      },
+    });
+
+    const result = await execCli(["status", "--state-root", stateRoot]);
+    const status = JSON.parse(result.stdout) as { readonly state?: unknown; readonly blockerReason?: unknown };
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 1);
+    assert.equal(status.state, "blocked");
+    assert.equal(status.blockerReason, "required review evidence is missing");
+  });
+});
+
 test("malformed queue state is reported as blocked instead of ready", async () => {
   await withStateRoot(async (stateRoot) => {
     const queuePath = resolveLaneRunQueueRecordPath(stateRoot, "github-issue-111");
@@ -246,6 +308,27 @@ test("queue filesystem shape errors are reported as malformed status and explana
     assert.equal(explanation.state, "blocked");
     assert.equal(explanation.blockerReason, "lane run state is malformed");
     assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
+test("CLI status returns structured blocked output for malformed queue shape", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await writeFile(path.join(stateRoot, "lane-run-queue"), "not a directory\n", {
+      encoding: "utf8",
+    });
+
+    const result = await execCli(["status", "--state-root", stateRoot]);
+    const status = JSON.parse(result.stdout) as {
+      readonly state?: unknown;
+      readonly blockerReason?: unknown;
+      readonly nextOperatorAction?: unknown;
+    };
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 1);
+    assert.equal(status.state, "blocked");
+    assert.equal(status.blockerReason, "lane run state is malformed");
+    assert.equal(status.nextOperatorAction, "repair or remove malformed lane state before continuing");
   });
 });
 
@@ -417,7 +500,11 @@ test("terminal locks drive next action even when the queue record is stale queue
     const explanation = await explainLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-111",
     });
+    const status = await getLaneRunStatus(stateRoot);
 
+    assert.equal(status.queue[0]?.laneState, "completed");
+    assert.equal(status.queue[0]?.verificationState, "succeeded");
+    assert.equal(status.queue[0]?.nextOperatorAction, "no action required");
     assert.equal(explanation.laneState, "completed");
     assert.equal(explanation.verificationState, "succeeded");
     assert.equal(explanation.nextOperatorAction, "no action required");
@@ -438,23 +525,13 @@ test("CLI status and explain emit deterministic public-safe JSON", async () => {
       },
     });
 
-    const status = await execFileAsync(process.execPath, [
-      "dist/src/cli/index.js",
-      "status",
-      "--state-root",
-      stateRoot,
-    ]);
-    const explain = await execFileAsync(process.execPath, [
-      "dist/src/cli/index.js",
-      "explain",
-      "--state-root",
-      stateRoot,
-      "--issue",
-      "github-issue-111",
-    ]);
+    const status = await execCli(["status", "--state-root", stateRoot]);
+    const explain = await execCli(["explain", "--state-root", stateRoot, "--issue", "github-issue-111"]);
 
     assert.equal(status.stderr, "");
     assert.equal(explain.stderr, "");
+    assert.equal(status.exitCode, 0);
+    assert.equal(explain.exitCode, 0);
     assert.equal(JSON.stringify(JSON.parse(status.stdout)).includes(stateRoot), false);
     assert.equal(JSON.parse(explain.stdout).nextOperatorAction, "claim queued lane run when ready");
   });
