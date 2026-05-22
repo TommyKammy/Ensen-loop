@@ -938,14 +938,14 @@ export async function getLaneRunStatus(stateRoot: string): Promise<LaneRunOperat
 
     throw error;
   }
-  const blockedItem = queue.find((item) => item.laneState === "blocked");
+  const blockedItem = queue.find((item) => isBlockedOperatorStatusItem(item));
 
   if (blockedItem !== undefined) {
     return {
       schemaVersion: "ensen.lane-run-status.v1",
       state: "blocked",
       queue,
-      blockerReason: blockedItem.blockerReason ?? "one or more lane runs are blocked",
+      blockerReason: resolveBlockedOperatorStatusReason(blockedItem),
       nextOperatorAction: blockedItem.nextOperatorAction,
     };
   }
@@ -962,14 +962,23 @@ export async function explainLaneRun(
   input: ExplainLaneRunInput = {},
 ): Promise<LaneRunOperatorExplanation> {
   if (input.stableWorkItemId !== undefined) {
+    assertSafeStableWorkItemId(input.stableWorkItemId);
+
     try {
-      assertSafeStableWorkItemId(input.stableWorkItemId);
-      const record = await readLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+      const queueRecords = await readLaneRunQueueRecords(stateRoot);
+      const record = queueRecords.find(
+        (candidate) => candidate.stableWorkItemId === input.stableWorkItemId,
+      );
+
+      if (record === undefined) {
+        return createRequestedIssueNotFoundExplanation(input.stableWorkItemId);
+      }
+
       const item = await createLaneRunOperatorStatusItem(stateRoot, record);
 
       return {
         schemaVersion: "ensen.lane-run-explain.v1",
-        state: item.laneState === "blocked" ? "blocked" : "ok",
+        state: isBlockedOperatorStatusItem(item) ? "blocked" : "ok",
         selectedIssue: item.selectedIssue,
         stableWorkItemId: item.stableWorkItemId,
         laneId: item.laneId,
@@ -982,10 +991,6 @@ export async function explainLaneRun(
     } catch (error) {
       if (isMalformedLaneRunStateError(error)) {
         return createMalformedLaneRunExplanation(input.stableWorkItemId);
-      }
-
-      if (isNodeError(error) && error.code === "ENOENT") {
-        return createRequestedIssueNotFoundExplanation(input.stableWorkItemId);
       }
 
       throw error;
@@ -1003,7 +1008,7 @@ export async function explainLaneRun(
 
   return {
     schemaVersion: "ensen.lane-run-explain.v1",
-    state: selected.laneState === "blocked" ? "blocked" : "ok",
+    state: isBlockedOperatorStatusItem(selected) ? "blocked" : "ok",
     selectedIssue: selected.selectedIssue,
     stableWorkItemId: selected.stableWorkItemId,
     laneId: selected.laneId,
@@ -1531,7 +1536,7 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
   }
 
   records.sort((left, right) => {
-    const queuedComparison = left.queuedAt.localeCompare(right.queuedAt);
+    const queuedComparison = compareIsoDateTimeInstants(left.queuedAt, right.queuedAt);
 
     if (queuedComparison !== 0) {
       return queuedComparison;
@@ -1541,6 +1546,10 @@ async function readLaneRunQueueRecords(stateRoot: string): Promise<readonly Lane
   });
 
   return records;
+}
+
+function compareIsoDateTimeInstants(left: string, right: string): number {
+  return Date.parse(left) - Date.parse(right);
 }
 
 async function createLaneRunOperatorStatusItem(
@@ -1677,10 +1686,34 @@ function selectDefaultLaneRunExplanationItem(
   queue: readonly LaneRunOperatorStatusItem[],
 ): LaneRunOperatorStatusItem | undefined {
   return (
-    queue.find((item) => item.laneState === "blocked") ??
+    queue.find((item) => isBlockedOperatorStatusItem(item)) ??
     queue.find((item) => item.nextOperatorAction !== "no action required") ??
     queue[0]
   );
+}
+
+function isBlockedOperatorStatusItem(item: LaneRunOperatorStatusItem): boolean {
+  return (
+    item.laneState === "blocked" ||
+    item.laneState === "revoked" ||
+    item.laneState === "superseded"
+  );
+}
+
+function resolveBlockedOperatorStatusReason(item: LaneRunOperatorStatusItem): string {
+  if (item.blockerReason !== undefined) {
+    return item.blockerReason;
+  }
+
+  if (item.laneState === "revoked") {
+    return "lane run was revoked";
+  }
+
+  if (item.laneState === "superseded") {
+    return "lane run was superseded";
+  }
+
+  return "one or more lane runs are blocked";
 }
 
 function publicSafeDiagnosticText(value: string | undefined): string | undefined {

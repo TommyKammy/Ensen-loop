@@ -332,6 +332,120 @@ test("CLI status returns structured blocked output for malformed queue shape", a
   });
 });
 
+test("issue-scoped explain fails closed when any queue record is malformed", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "111",
+      },
+    });
+    await writeFile(path.join(stateRoot, "lane-run-queue", "Github-Issue-112.json"), "{}\n", {
+      encoding: "utf8",
+    });
+
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.laneState, "blocked");
+    assert.equal(explanation.blockerReason, "lane run state is malformed");
+    assert.equal(explanation.nextOperatorAction, "repair or remove malformed lane state before continuing");
+  });
+});
+
+test("invalid issue-scoped explain input is not reported as malformed state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await assert.rejects(
+      () =>
+        explainLaneRun(stateRoot, {
+          stableWorkItemId: "Github-Issue-111",
+        }),
+      /Stable work item identifiers may only contain lowercase letters/,
+    );
+  });
+});
+
+test("status treats revoked and superseded queue states as blocked", async () => {
+  for (const terminalStatus of ["revoked", "superseded"] as const) {
+    await withStateRoot(async (stateRoot) => {
+      await enqueueLaneRun(stateRoot, {
+        stableWorkItemId: `github-issue-${terminalStatus}`,
+        workItemId: `issue-${terminalStatus}`,
+        source: "github-issue",
+        laneId: "owner-dogfood",
+        repositoryClassification: "owner-controlled-dogfood",
+        queuedAt,
+      });
+      const claim = await claimQueuedLaneRun(stateRoot, {
+        stableWorkItemId: `github-issue-${terminalStatus}`,
+        laneRunId: `lane-run-${terminalStatus}-a`,
+        claimedBy: "local-supervisor",
+        claimedAt,
+      });
+      await completeLaneRunLock(stateRoot, {
+        stableWorkItemId: `github-issue-${terminalStatus}`,
+        laneRunId: claim.lock.laneRunId,
+        completedAt: "2026-05-22T00:02:00.000Z",
+        terminalStatus,
+      });
+
+      const status = await getLaneRunStatus(stateRoot);
+      const explanation = await explainLaneRun(stateRoot, {
+        stableWorkItemId: `github-issue-${terminalStatus}`,
+      });
+
+      assert.equal(status.state, "blocked");
+      assert.equal(status.queue[0]?.laneState, terminalStatus);
+      assert.equal(status.blockerReason, `lane run was ${terminalStatus}`);
+      assert.equal(explanation.state, "blocked");
+      assert.equal(explanation.laneState, terminalStatus);
+    });
+  }
+});
+
+test("status orders queue records by timestamp instant before stable id", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-22T00:00:00Z",
+      metadata: {
+        issueNumber: "112",
+      },
+    });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-22T00:30:00+01:00",
+      metadata: {
+        issueNumber: "111",
+      },
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot);
+
+    assert.deepEqual(
+      status.queue.map((item) => item.selectedIssue),
+      ["#111", "#112"],
+    );
+    assert.equal(explanation.selectedIssue, "#111");
+  });
+});
+
 test("explain without issue prefers blocked queue items over runnable work", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
