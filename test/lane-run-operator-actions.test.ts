@@ -778,3 +778,76 @@ test("CLI stop emits public-safe action diagnostics", async () => {
     assert.equal(JSON.stringify(output).includes("metadata"), false);
   });
 });
+
+test("CLI retry does not print queued metadata values", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        privateOperatorNote: "token=ghp_sampleSecretValue",
+      },
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      completedAt: actedAt,
+      terminalStatus: "superseded",
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-112",
+        status: "failed",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-112",
+        }),
+      }),
+    );
+
+    const result = await execCli([
+      "retry",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-112",
+      "--lane-run",
+      "lane-run-112-a",
+      "--reason",
+      "operator token=ghp_sampleSecretValue retry",
+    ]);
+    const output = JSON.parse(result.stdout) as {
+      readonly ok?: unknown;
+      readonly action?: unknown;
+      readonly publicDiagnostics?: { readonly reason?: unknown };
+    };
+    const serializedOutput = JSON.stringify(output);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 0);
+    assert.equal(output.ok, true);
+    assert.equal(output.action, "retry");
+    assert.equal(output.publicDiagnostics?.reason, "operator <redacted> retry");
+    assert.equal(serializedOutput.includes(stateRoot), false);
+    assert.equal(serializedOutput.includes("ghp_sampleSecretValue"), false);
+    assert.equal(serializedOutput.includes("queueRecord"), false);
+    assert.equal(serializedOutput.includes("metadata"), false);
+    assert.equal(serializedOutput.includes("privateOperatorNote"), false);
+  });
+});
