@@ -985,7 +985,7 @@ export async function explainLaneRun(
       }
 
       if (isNodeError(error) && error.code === "ENOENT") {
-        return createNoSelectedIssueExplanation();
+        return createRequestedIssueNotFoundExplanation(input.stableWorkItemId);
       }
 
       throw error;
@@ -1542,7 +1542,10 @@ async function createLaneRunOperatorStatusItem(
   stateRoot: string,
   record: LaneRunQueueRecord,
 ): Promise<LaneRunOperatorStatusItem> {
-  const lock = await readOptionalLaneRunLock(stateRoot, record.stableWorkItemId);
+  const lock = resolveOperatorProjectionLock(
+    record,
+    await readOptionalLaneRunLock(stateRoot, record.stableWorkItemId),
+  );
   const blockerReason = publicSafeDiagnosticText(record.metadata.blockerReason);
   const verificationState = resolveOperatorVerificationState(record, lock, blockerReason);
   const laneState = blockerReason === undefined ? resolveOperatorLaneState(record, lock) : "blocked";
@@ -1588,6 +1591,17 @@ function resolveOperatorLaneState(
   }
 
   return record.status;
+}
+
+function resolveOperatorProjectionLock(
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+): LaneRunLock | undefined {
+  if (lock === undefined || lock.active === true) {
+    return lock;
+  }
+
+  return isStaleQueueRecordForTerminalLock(record, lock) ? lock : undefined;
 }
 
 function resolveOperatorVerificationState(
@@ -1657,7 +1671,11 @@ function resolveNextOperatorAction(
 function selectDefaultLaneRunExplanationItem(
   queue: readonly LaneRunOperatorStatusItem[],
 ): LaneRunOperatorStatusItem | undefined {
-  return queue.find((item) => item.nextOperatorAction !== "no action required") ?? queue[0];
+  return (
+    queue.find((item) => item.laneState === "blocked") ??
+    queue.find((item) => item.nextOperatorAction !== "no action required") ??
+    queue[0]
+  );
 }
 
 function publicSafeDiagnosticText(value: string | undefined): string | undefined {
@@ -1685,6 +1703,19 @@ function createNoSelectedIssueExplanation(): LaneRunOperatorExplanation {
     verificationState: "unknown",
     blockerReason: "no selected issue",
     nextOperatorAction: "select or enqueue a lane run before claiming readiness",
+  };
+}
+
+function createRequestedIssueNotFoundExplanation(stableWorkItemId: string): LaneRunOperatorExplanation {
+  return {
+    schemaVersion: "ensen.lane-run-explain.v1",
+    state: "blocked",
+    selectedIssue: stableWorkItemId,
+    stableWorkItemId,
+    laneState: "blocked",
+    verificationState: "unknown",
+    blockerReason: "requested issue is not queued",
+    nextOperatorAction: "select an existing lane run or enqueue the requested issue before claiming readiness",
   };
 }
 

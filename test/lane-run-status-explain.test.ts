@@ -87,6 +87,37 @@ test("explain fails closed when no selected issue exists", async () => {
   });
 });
 
+test("explain reports unknown requested issue separately from non-empty queue", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "111",
+      },
+    });
+
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+    });
+
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.selectedIssue, "github-issue-112");
+    assert.equal(explanation.stableWorkItemId, "github-issue-112");
+    assert.equal(explanation.laneState, "blocked");
+    assert.equal(explanation.verificationState, "unknown");
+    assert.equal(explanation.blockerReason, "requested issue is not queued");
+    assert.equal(
+      explanation.nextOperatorAction,
+      "select an existing lane run or enqueue the requested issue before claiming readiness",
+    );
+  });
+});
+
 test("explain identifies blocked active lane run and safe next action", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
@@ -163,6 +194,43 @@ test("syntactically invalid queue JSON is reported as malformed status and expla
   });
 });
 
+test("explain without issue prefers blocked queue items over runnable work", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-110",
+      workItemId: "issue-110",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-22T00:00:00.000Z",
+      metadata: {
+        issueNumber: "110",
+      },
+    });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-22T00:01:00.000Z",
+      metadata: {
+        issueNumber: "111",
+        blockerReason: "required review evidence is missing",
+      },
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot);
+
+    assert.equal(status.state, "blocked");
+    assert.equal(explanation.state, "blocked");
+    assert.equal(explanation.selectedIssue, "#111");
+    assert.equal(explanation.laneState, "blocked");
+    assert.equal(explanation.blockerReason, "required review evidence is missing");
+  });
+});
+
 test("explain without issue prefers actionable queue items over terminal history", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
@@ -205,6 +273,60 @@ test("explain without issue prefers actionable queue items over terminal history
     assert.equal(explanation.selectedIssue, "#111");
     assert.equal(explanation.laneState, "queued");
     assert.equal(explanation.nextOperatorAction, "claim queued lane run when ready");
+  });
+});
+
+test("operator projection ignores obsolete terminal lock for newer queued record", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "111",
+      },
+    });
+    const claim = await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      laneRunId: "lane-run-111-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      laneRunId: claim.lock.laneRunId,
+      completedAt: "2026-05-22T00:02:00.000Z",
+      terminalStatus: "completed",
+    });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-22T00:03:00.000Z",
+      metadata: {
+        issueNumber: "111",
+      },
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+
+    assert.equal(status.state, "ok");
+    assert.equal(status.queue[0]?.laneState, "queued");
+    assert.equal(status.queue[0]?.verificationState, "not-started");
+    assert.equal(status.queue[0]?.nextOperatorAction, "claim queued lane run when ready");
+    assert.equal(status.queue[0]?.activeLock, undefined);
+    assert.equal(explanation.laneState, "queued");
+    assert.equal(explanation.verificationState, "not-started");
+    assert.equal(explanation.nextOperatorAction, "claim queued lane run when ready");
+    assert.equal(explanation.activeLock, undefined);
   });
 });
 
