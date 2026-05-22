@@ -903,7 +903,17 @@ export async function readLaneRunLock(stateRoot: string, stableWorkItemId: strin
 }
 
 export async function getLaneRunStatus(stateRoot: string): Promise<LaneRunOperatorStatus> {
-  const queueRecords = await readLaneRunQueueRecords(stateRoot);
+  let queueRecords: readonly LaneRunQueueRecord[];
+
+  try {
+    queueRecords = await readLaneRunQueueRecords(stateRoot);
+  } catch (error) {
+    if (isMalformedLaneRunStateError(error)) {
+      return createMalformedLaneRunStatus();
+    }
+
+    throw error;
+  }
 
   if (queueRecords.length === 0) {
     return {
@@ -915,12 +925,35 @@ export async function getLaneRunStatus(stateRoot: string): Promise<LaneRunOperat
     };
   }
 
+  let queue: readonly LaneRunOperatorStatusItem[];
+
+  try {
+    queue = await Promise.all(
+      queueRecords.map(async (record) => createLaneRunOperatorStatusItem(stateRoot, record)),
+    );
+  } catch (error) {
+    if (isMalformedLaneRunStateError(error)) {
+      return createMalformedLaneRunStatus();
+    }
+
+    throw error;
+  }
+  const blockedItem = queue.find((item) => item.laneState === "blocked");
+
+  if (blockedItem !== undefined) {
+    return {
+      schemaVersion: "ensen.lane-run-status.v1",
+      state: "blocked",
+      queue,
+      blockerReason: blockedItem.blockerReason ?? "one or more lane runs are blocked",
+      nextOperatorAction: blockedItem.nextOperatorAction,
+    };
+  }
+
   return {
     schemaVersion: "ensen.lane-run-status.v1",
     state: "ok",
-    queue: await Promise.all(
-      queueRecords.map(async (record) => createLaneRunOperatorStatusItem(stateRoot, record)),
-    ),
+    queue,
   };
 }
 
@@ -960,10 +993,12 @@ export async function explainLaneRun(
   }
 
   const status = await getLaneRunStatus(stateRoot);
-  const selected = status.queue[0];
+  const selected = selectDefaultLaneRunExplanationItem(status.queue);
 
   if (selected === undefined) {
-    return createNoSelectedIssueExplanation();
+    return status.blockerReason === "lane run state is malformed"
+      ? createMalformedLaneRunExplanation(undefined)
+      : createNoSelectedIssueExplanation();
   }
 
   return {
@@ -1592,6 +1627,18 @@ function resolveNextOperatorAction(
     return `wait for active lane run ${lock.laneRunId} to finish`;
   }
 
+  if (lock?.status === "completed") {
+    return "no action required";
+  }
+
+  if (lock?.status === "revoked") {
+    return "inspect revocation before rediscovery";
+  }
+
+  if (lock?.status === "superseded") {
+    return "enqueue a fresh lane run if this issue is still selected";
+  }
+
   if (record.status === "queued") {
     return "claim queued lane run when ready";
   }
@@ -1605,6 +1652,12 @@ function resolveNextOperatorAction(
   }
 
   return "enqueue a fresh lane run if this issue is still selected";
+}
+
+function selectDefaultLaneRunExplanationItem(
+  queue: readonly LaneRunOperatorStatusItem[],
+): LaneRunOperatorStatusItem | undefined {
+  return queue.find((item) => item.nextOperatorAction !== "no action required") ?? queue[0];
 }
 
 function publicSafeDiagnosticText(value: string | undefined): string | undefined {
@@ -1635,6 +1688,16 @@ function createNoSelectedIssueExplanation(): LaneRunOperatorExplanation {
   };
 }
 
+function createMalformedLaneRunStatus(): LaneRunOperatorStatus {
+  return {
+    schemaVersion: "ensen.lane-run-status.v1",
+    state: "blocked",
+    queue: [],
+    blockerReason: "lane run state is malformed",
+    nextOperatorAction: "repair or remove malformed lane state before continuing",
+  };
+}
+
 function createMalformedLaneRunExplanation(
   stableWorkItemId: string | undefined,
 ): LaneRunOperatorExplanation {
@@ -1650,7 +1713,10 @@ function createMalformedLaneRunExplanation(
 }
 
 function isMalformedLaneRunStateError(error: unknown): boolean {
-  return error instanceof Error && /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message);
+  return (
+    error instanceof SyntaxError ||
+    (error instanceof Error && /Lane run .*malformed|Unexpected end of JSON|not valid JSON/.test(error.message))
+  );
 }
 
 async function readOptionalLaneRunQueueRecord(
