@@ -243,6 +243,80 @@ export interface LaneRunOperatorActionLineage {
 }
 
 export type LaneRunOperatorAction = "stop" | "retry" | "requeue";
+export type LaneRunReconciliationCategory = "safe-to-requeue" | "needs-cleanup" | "manual-review" | "blocked";
+export type LaneRunReconciliationMismatchKind =
+  | "missing-branch"
+  | "missing-worktree"
+  | "missing-journal"
+  | "missing-pr-draft"
+  | "stale-lock"
+  | "conflicting-verification-facts"
+  | "missing-queue-record"
+  | "lane-run-target-mismatch";
+
+export interface LaneRunObservedSurface {
+  readonly expected: boolean;
+  readonly exists: boolean;
+  readonly ref?: string;
+}
+
+export interface LaneRunObservedVerificationFact {
+  readonly source: string;
+  readonly status: LaneRunStatus | LaneRunOperatorVerificationState;
+  readonly evidenceRef?: string;
+}
+
+export interface ReconcileLaneRunStateInput {
+  readonly stableWorkItemId: string;
+  readonly laneRunId?: string;
+  readonly observedAt: string;
+  readonly surfaces: {
+    readonly branch?: LaneRunObservedSurface;
+    readonly worktree?: LaneRunObservedSurface;
+    readonly journal?: LaneRunObservedSurface;
+    readonly prDraft?: LaneRunObservedSurface;
+    readonly verificationFacts?: readonly LaneRunObservedVerificationFact[];
+  };
+}
+
+export interface LaneRunReconciliationMismatch {
+  readonly kind: LaneRunReconciliationMismatchKind;
+  readonly category: LaneRunReconciliationCategory;
+  readonly publicMessage: string;
+  readonly nextOperatorAction: string;
+  readonly ref?: string;
+}
+
+export interface LaneRunReconciliationResult {
+  readonly schemaVersion: "ensen.lane-run-reconciliation.v1";
+  readonly state: "ok" | "blocked";
+  readonly category: LaneRunReconciliationCategory;
+  readonly stableWorkItemId: string;
+  readonly laneRunId?: string;
+  readonly observedAt: string;
+  readonly publicDiagnostics: {
+    readonly stableWorkItemId: string;
+    readonly laneId?: string;
+    readonly source?: string;
+    readonly repositoryClassification?: LaneRepositoryClassification;
+    readonly reason: string;
+  };
+  readonly nextOperatorAction: string;
+  readonly mismatches: readonly LaneRunReconciliationMismatch[];
+  readonly evidence: {
+    readonly bundleRefs: readonly string[];
+  };
+  readonly queue?: {
+    readonly status: LaneRunQueueStatus;
+    readonly enqueueSequence: number;
+  };
+  readonly lock?: {
+    readonly status: LaneRunLockStatus;
+    readonly active: boolean;
+    readonly laneRunId: string;
+  };
+  readonly startsAgentExecution: false;
+}
 
 const blockedLaneRunMetadataKeys = ["blockerReason"] as const;
 const linkedAttemptVolatileMetadataKeys = [
@@ -1062,6 +1136,164 @@ export async function explainLaneRun(
     blockerReason: selected.blockerReason,
     nextOperatorAction: selected.nextOperatorAction,
     activeLock: selected.activeLock,
+  };
+}
+
+export async function reconcileLaneRunState(
+  stateRoot: string,
+  input: ReconcileLaneRunStateInput,
+): Promise<LaneRunReconciliationResult> {
+  assertSafeStableWorkItemId(input.stableWorkItemId);
+
+  if (!isIsoDateTime(input.observedAt) || (input.laneRunId !== undefined && !isLaneRunId(input.laneRunId))) {
+    throw new Error("Lane run reconciliation input is malformed.");
+  }
+
+  const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+  const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+  const laneRunId = input.laneRunId ?? existingLock?.laneRunId;
+  const state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
+  const mismatches: LaneRunReconciliationMismatch[] = [];
+
+  if (queueRecord === undefined) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-queue-record",
+        "blocked",
+        "lane run queue record is missing",
+        "select or enqueue the lane run before reconciling stale state",
+      ),
+    );
+  }
+
+  if (existingLock !== undefined && input.laneRunId !== undefined && existingLock.laneRunId !== input.laneRunId) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-target-mismatch",
+        "blocked",
+        "reconciliation target does not match the active lane run lock",
+        "inspect the selected issue and retry reconciliation with the authoritative lane run id",
+      ),
+    );
+  }
+
+  if (existingLock?.active === true && state === undefined) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "stale-lock",
+        "safe-to-requeue",
+        "active lane run lock has no lane state",
+        "stop or remove the stale lock, then requeue explicitly if the issue is still selected",
+      ),
+    );
+  }
+
+  if (isMissingExpectedSurface(input.surfaces.branch)) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-branch",
+        existingLock?.active === true ? "blocked" : "needs-cleanup",
+        existingLock?.active === true
+          ? "active lane run is missing its branch"
+          : "terminal lane run is missing its branch",
+        existingLock?.active === true
+          ? "stop the active lane run, inspect evidence, then requeue explicitly if safe"
+          : "clean up stale lane references before rediscovery or requeue",
+        input.surfaces.branch?.ref,
+      ),
+    );
+  }
+
+  if (isMissingExpectedSurface(input.surfaces.worktree)) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-worktree",
+        existingLock?.active === true ? "blocked" : "needs-cleanup",
+        existingLock?.active === true
+          ? "active lane run is missing its worktree"
+          : "terminal lane run is missing its worktree",
+        existingLock?.active === true
+          ? "stop the active lane run, inspect evidence, then recreate or requeue explicitly"
+          : "remove stale worktree references or recreate the worktree before continuing",
+        input.surfaces.worktree?.ref,
+      ),
+    );
+  }
+
+  if (isLaneRunJournalMissing(input.surfaces.journal, state)) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-journal",
+        "manual-review",
+        "lane run journal entry is missing",
+        "manually review preserved evidence before retrying, requeueing, or cleaning up the lane",
+        input.surfaces.journal?.ref,
+      ),
+    );
+  }
+
+  if (isMissingExpectedSurface(input.surfaces.prDraft)) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-pr-draft",
+        "safe-to-requeue",
+        "lane run is missing its PR draft reference",
+        "requeue explicitly after confirming no draft PR exists for this lane",
+        input.surfaces.prDraft?.ref,
+      ),
+    );
+  }
+
+  if (hasConflictingVerificationFacts(input.surfaces.verificationFacts ?? [], state)) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "conflicting-verification-facts",
+        "manual-review",
+        "verification facts conflict with authoritative lane state",
+        "manually review verification evidence before changing queue, lock, or PR state",
+      ),
+    );
+  }
+
+  const leadingMismatch = selectLeadingLaneRunReconciliationMismatch(mismatches);
+  const reason = leadingMismatch?.publicMessage ?? "lane run state is consistent";
+  const nextOperatorAction = leadingMismatch?.nextOperatorAction ?? "no action required";
+
+  return {
+    schemaVersion: "ensen.lane-run-reconciliation.v1",
+    state: leadingMismatch === undefined ? "ok" : "blocked",
+    category: leadingMismatch?.category ?? "safe-to-requeue",
+    stableWorkItemId: input.stableWorkItemId,
+    laneRunId,
+    observedAt: input.observedAt,
+    publicDiagnostics: {
+      stableWorkItemId: input.stableWorkItemId,
+      laneId: queueRecord?.laneId ?? existingLock?.laneId,
+      source: queueRecord?.source ?? existingLock?.source,
+      repositoryClassification: queueRecord?.repositoryClassification ?? existingLock?.repositoryClassification,
+      reason,
+    },
+    nextOperatorAction,
+    mismatches,
+    evidence: {
+      bundleRefs: state?.evidence.bundleRefs ?? [],
+    },
+    queue:
+      queueRecord === undefined
+        ? undefined
+        : {
+            status: queueRecord.status,
+            enqueueSequence: queueRecord.enqueueSequence,
+          },
+    lock:
+      existingLock === undefined
+        ? undefined
+        : {
+            status: existingLock.status,
+            active: existingLock.active,
+            laneRunId: existingLock.laneRunId,
+          },
+    startsAgentExecution: false,
   };
 }
 
@@ -2420,6 +2652,106 @@ function createRequestedIssueNotFoundExplanation(stableWorkItemId: string): Lane
     blockerReason: "requested issue is not queued",
     nextOperatorAction: "select an existing lane run or enqueue the requested issue before claiming readiness",
   };
+}
+
+function isMissingExpectedSurface(surface: LaneRunObservedSurface | undefined): boolean {
+  return surface?.expected === true && surface.exists === false;
+}
+
+function isLaneRunJournalMissing(
+  journalSurface: LaneRunObservedSurface | undefined,
+  state: LaneRunState | undefined,
+): boolean {
+  if (isMissingExpectedSurface(journalSurface)) {
+    return true;
+  }
+
+  return state !== undefined && state.journal.entries.length === 0;
+}
+
+function hasConflictingVerificationFacts(
+  facts: readonly LaneRunObservedVerificationFact[],
+  state: LaneRunState | undefined,
+): boolean {
+  if (facts.length === 0) {
+    return false;
+  }
+
+  const normalizedStatuses = new Set(facts.map((fact) => normalizeVerificationFactStatus(fact.status)));
+
+  if (normalizedStatuses.size > 1) {
+    return true;
+  }
+
+  if (state === undefined) {
+    return false;
+  }
+
+  const [observedStatus] = normalizedStatuses;
+
+  return observedStatus !== undefined && observedStatus !== normalizeVerificationFactStatus(state.status);
+}
+
+function normalizeVerificationFactStatus(
+  status: LaneRunStatus | LaneRunOperatorVerificationState,
+): "not-started" | "running" | "blocked" | "succeeded" | "failed" | "unknown" {
+  if (status === "queued" || status === "not-started") {
+    return "not-started";
+  }
+
+  if (status === "running" || status === "verifying" || status === "reviewing") {
+    return "running";
+  }
+
+  if (status === "completed" || status === "succeeded") {
+    return "succeeded";
+  }
+
+  if (status === "failed") {
+    return "failed";
+  }
+
+  if (status === "blocked") {
+    return "blocked";
+  }
+
+  return "unknown";
+}
+
+function createLaneRunReconciliationMismatch(
+  kind: LaneRunReconciliationMismatchKind,
+  category: LaneRunReconciliationCategory,
+  publicMessage: string,
+  nextOperatorAction: string,
+  ref?: string,
+): LaneRunReconciliationMismatch {
+  const safeRef = publicSafeDiagnosticText(ref);
+
+  return safeRef === undefined
+    ? {
+        kind,
+        category,
+        publicMessage,
+        nextOperatorAction,
+      }
+    : {
+        kind,
+        category,
+        publicMessage,
+        nextOperatorAction,
+        ref: safeRef,
+      };
+}
+
+function selectLeadingLaneRunReconciliationMismatch(
+  mismatches: readonly LaneRunReconciliationMismatch[],
+): LaneRunReconciliationMismatch | undefined {
+  return (
+    mismatches.find((mismatch) => mismatch.category === "blocked") ??
+    mismatches.find((mismatch) => mismatch.category === "manual-review") ??
+    mismatches.find((mismatch) => mismatch.category === "needs-cleanup") ??
+    mismatches[0]
+  );
 }
 
 function createMalformedLaneRunStatus(): LaneRunOperatorStatus {
