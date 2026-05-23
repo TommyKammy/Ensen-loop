@@ -254,6 +254,7 @@ export type LaneRunReconciliationMismatchKind =
   | "missing-queue-record"
   | "lane-run-target-mismatch"
   | "malformed-lane-state"
+  | "lane-run-ownership-unverified"
   | "lane-run-work-item-mismatch"
   | "lock-queue-record-mismatch";
 
@@ -1156,14 +1157,21 @@ export async function reconcileLaneRunState(
   let existingLock: LaneRunLock | undefined;
   let laneRunId: string | undefined;
   let state: LaneRunState | undefined;
+  let inputLaneRunOwnershipUnverified = false;
 
   try {
     queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    const inputLaneRunMatchesQueueRecord =
+      input.laneRunId !== undefined &&
+      queueRecord !== undefined &&
+      isTerminalQueueRecordLinkedToLaneRun(queueRecord, input.laneRunId);
+    inputLaneRunOwnershipUnverified =
+      input.laneRunId !== undefined && existingLock?.active !== true && !inputLaneRunMatchesQueueRecord;
     laneRunId =
       existingLock?.active === true
         ? existingLock.laneRunId
-        : input.laneRunId !== undefined && queueRecord !== undefined
+        : inputLaneRunMatchesQueueRecord
           ? input.laneRunId
           : input.laneRunId === undefined
             ? existingLock?.laneRunId
@@ -1184,12 +1192,15 @@ export async function reconcileLaneRunState(
   const mismatches: LaneRunReconciliationMismatch[] = [];
 
   if (queueRecord === undefined) {
+    const hasActiveLock = existingLock?.active === true;
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "missing-queue-record",
         "blocked",
-        "lane run queue record is missing",
-        "select or enqueue the lane run before reconciling stale state",
+        hasActiveLock ? "active lane run lock has no queue record" : "lane run queue record is missing",
+        hasActiveLock
+          ? "stop or remove the active lock, then enqueue or requeue explicitly if the issue is still selected"
+          : "select or enqueue the lane run before reconciling stale state",
       ),
     );
   }
@@ -1216,7 +1227,31 @@ export async function reconcileLaneRunState(
     );
   }
 
-  if (state !== undefined && queueRecord !== undefined && state.workItemId !== queueRecord.workItemId) {
+  let laneRunStateOwnershipUnverified = false;
+
+  if (inputLaneRunOwnershipUnverified) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-ownership-unverified",
+        "blocked",
+        "lane run state ownership is unverifiable",
+        "restore the queue record or retry reconciliation with the lane run id linked to the selected issue",
+      ),
+    );
+  }
+
+  if (state !== undefined && queueRecord === undefined) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-ownership-unverified",
+        "blocked",
+        "lane run state ownership is unverifiable",
+        "restore the queue record or remove the unverified lock before exposing lane evidence",
+      ),
+    );
+    laneRunStateOwnershipUnverified = true;
+    state = undefined;
+  } else if (state !== undefined && queueRecord !== undefined && state.workItemId !== queueRecord.workItemId) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "lane-run-work-item-mismatch",
@@ -1228,7 +1263,7 @@ export async function reconcileLaneRunState(
     state = undefined;
   }
 
-  if (existingLock?.active === true && state === undefined) {
+  if (existingLock?.active === true && state === undefined && !laneRunStateOwnershipUnverified) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "stale-lock",
@@ -1891,6 +1926,10 @@ function createPreservedEvidenceQueueMetadata(
 }
 
 function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRunId: string): boolean {
+  if (record.status === "completed") {
+    return isLaneRunIdMetadataMatch(record.metadata, "completed", laneRunId);
+  }
+
   if (record.status === "revoked") {
     return isLaneRunIdMetadataMatch(record.metadata, "revoked", laneRunId);
   }

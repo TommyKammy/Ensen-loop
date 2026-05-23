@@ -14,6 +14,7 @@ import {
   readLaneRunQueueRecord,
   reconcileLaneRunState,
   resolveLaneRunLockPath,
+  resolveLaneRunQueueRecordPath,
   writeLaneRunState,
 } from "../src/lane/index.js";
 
@@ -215,6 +216,35 @@ test("reconciliation blocks active lock and queue record divergence", async () =
   });
 });
 
+test("reconciliation prefers active-lock cleanup guidance when queue state is missing", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await rm(resolveLaneRunQueueRecordPath(stateRoot, "github-issue-113"), { force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "active lane run lock has no queue record");
+    assert.equal(
+      result.nextOperatorAction,
+      "stop or remove the active lock, then enqueue or requeue explicitly if the issue is still selected",
+    );
+    assert.equal(result.mismatches[0]?.kind, "missing-queue-record");
+  });
+});
+
 test("reconciliation classifies a missing terminal worktree as cleanup-required without deleting evidence", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
@@ -251,7 +281,7 @@ test("reconciliation classifies a missing terminal worktree as cleanup-required 
   });
 });
 
-test("reconciliation ignores target mismatch for terminal historical locks", async () => {
+test("reconciliation blocks unlinked terminal targets without reporting active-lock target mismatch", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
     await completeLaneRunLock(stateRoot, {
@@ -278,13 +308,16 @@ test("reconciliation ignores target mismatch for terminal historical locks", asy
       },
     });
 
-    assert.equal(result.state, "ok");
-    assert.equal(result.laneRunId, "lane-run-113-b");
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.laneRunId, undefined);
     assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "lane-run-target-mismatch"), false);
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "lane-run-ownership-unverified"), true);
+    assert.deepEqual(result.evidence.bundleRefs, []);
   });
 });
 
-test("reconciliation blocks cross-work-item lane state without exposing evidence", async () => {
+test("reconciliation blocks unlinked same-work-item lane state without exposing evidence", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-113",
@@ -299,7 +332,7 @@ test("reconciliation blocks cross-work-item lane state without exposing evidence
     });
     await writeLaneState(stateRoot, {
       laneRunId: "lane-run-999-a",
-      workItemId: "issue-999",
+      workItemId: "issue-113",
       evidenceRefs: ["artifacts/evidence/other-issue-private.json"],
     });
 
@@ -318,8 +351,38 @@ test("reconciliation blocks cross-work-item lane state without exposing evidence
 
     assert.equal(result.state, "blocked");
     assert.equal(result.category, "blocked");
-    assert.equal(result.publicDiagnostics.reason, "lane run state does not belong to the requested work item");
-    assert.equal(result.mismatches[0]?.kind, "lane-run-work-item-mismatch");
+    assert.equal(result.publicDiagnostics.reason, "lane run state ownership is unverifiable");
+    assert.equal(result.mismatches[0]?.kind, "lane-run-ownership-unverified");
+    assert.deepEqual(result.evidence.bundleRefs, []);
+  });
+});
+
+test("reconciliation does not expose evidence when queue ownership is missing", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await writeLaneState(stateRoot, {
+      evidenceRefs: ["artifacts/evidence/unverified-private.json"],
+    });
+    await rm(resolveLaneRunQueueRecordPath(stateRoot, "github-issue-113"), { force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "active lane run lock has no queue record");
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "lane-run-ownership-unverified"), true);
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "stale-lock"), false);
     assert.deepEqual(result.evidence.bundleRefs, []);
   });
 });
