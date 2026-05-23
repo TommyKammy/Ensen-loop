@@ -1396,6 +1396,15 @@ async function createLinkedQueuedOperatorAttempt(
       );
     }
 
+    if (action === "retry" && queueRecord.status === "queued") {
+      return createBlockedLaneRunOperatorActionResult(
+        action,
+        input,
+        diagnosticsLock,
+        "operator action requires a terminal lane run record",
+      );
+    }
+
     if (action === "requeue" && queueRecord.status !== "revoked" && queueRecord.status !== "superseded") {
       return createBlockedLaneRunOperatorActionResult(
         action,

@@ -477,6 +477,70 @@ test("retry drops stale preserved evidence metadata when the next target has no 
   });
 });
 
+test("retry fails closed when a retry attempt is already queued", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      completedAt: actedAt,
+      terminalStatus: "superseded",
+    });
+    await writeLaneRunState(
+      stateRoot,
+      createLaneRunState({
+        id: "lane-run-112-a",
+        workItemId: "issue-112",
+        status: "failed",
+        revision: 1,
+        createdAt: claimedAt,
+        updatedAt: actedAt,
+        journal: createLaneJournal({
+          id: "journal-lane-run-112-a",
+          laneRunId: "lane-run-112-a",
+          workItemId: "issue-112",
+        }),
+      }),
+    );
+
+    const firstRetry = await retryLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator retry",
+      actedAt,
+    });
+
+    assert.equal(firstRetry.ok, true);
+
+    const queuedRetry = await readLaneRunQueueRecord(stateRoot, "github-issue-112");
+    const terminalLock = await readLaneRunLock(stateRoot, "github-issue-112");
+    const secondRetry = await retryLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      reason: "operator retry again",
+      actedAt,
+    });
+
+    assert.equal(secondRetry.ok, false);
+    assert.equal(secondRetry.publicDiagnostics.reason, "operator action requires a terminal lane run record");
+    assert.deepEqual(await readLaneRunQueueRecord(stateRoot, "github-issue-112"), queuedRetry);
+    assert.deepEqual(await readLaneRunLock(stateRoot, "github-issue-112"), terminalLock);
+  });
+});
+
 test("retry fails closed for an active lane run and keeps durable state unchanged", async () => {
   await withStateRoot(async (stateRoot) => {
     const queued = await enqueueLaneRun(stateRoot, {
