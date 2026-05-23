@@ -252,7 +252,8 @@ export type LaneRunReconciliationMismatchKind =
   | "stale-lock"
   | "conflicting-verification-facts"
   | "missing-queue-record"
-  | "lane-run-target-mismatch";
+  | "lane-run-target-mismatch"
+  | "malformed-lane-state";
 
 export interface LaneRunObservedSurface {
   readonly expected: boolean;
@@ -1149,10 +1150,28 @@ export async function reconcileLaneRunState(
     throw new Error("Lane run reconciliation input is malformed.");
   }
 
-  const queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
-  const existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
-  const laneRunId = input.laneRunId ?? existingLock?.laneRunId;
-  const state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
+  let queueRecord: LaneRunQueueRecord | undefined;
+  let existingLock: LaneRunLock | undefined;
+  let laneRunId: string | undefined;
+  let state: LaneRunState | undefined;
+
+  try {
+    queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
+    existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    laneRunId = existingLock?.active === true ? existingLock.laneRunId : input.laneRunId ?? existingLock?.laneRunId;
+    state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
+  } catch (error) {
+    if (isMalformedLaneRunStateError(error)) {
+      return createMalformedLaneRunReconciliationResult(input, {
+        laneRunId,
+        queueRecord,
+        existingLock,
+      });
+    }
+
+    throw error;
+  }
+
   const mismatches: LaneRunReconciliationMismatch[] = [];
 
   if (queueRecord === undefined) {
@@ -1166,7 +1185,7 @@ export async function reconcileLaneRunState(
     );
   }
 
-  if (existingLock !== undefined && input.laneRunId !== undefined && existingLock.laneRunId !== input.laneRunId) {
+  if (existingLock?.active === true && input.laneRunId !== undefined && existingLock.laneRunId !== input.laneRunId) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "lane-run-target-mismatch",
@@ -2775,6 +2794,60 @@ function createMalformedLaneRunExplanation(
     verificationState: "unknown",
     blockerReason: "lane run state is malformed",
     nextOperatorAction: "repair or remove malformed lane state before continuing",
+  };
+}
+
+function createMalformedLaneRunReconciliationResult(
+  input: ReconcileLaneRunStateInput,
+  context: {
+    readonly laneRunId?: string;
+    readonly queueRecord?: LaneRunQueueRecord;
+    readonly existingLock?: LaneRunLock;
+  },
+): LaneRunReconciliationResult {
+  const mismatch = createLaneRunReconciliationMismatch(
+    "malformed-lane-state",
+    "blocked",
+    "lane run state is malformed",
+    "repair or remove malformed lane state before continuing",
+  );
+
+  return {
+    schemaVersion: "ensen.lane-run-reconciliation.v1",
+    state: "blocked",
+    category: "blocked",
+    stableWorkItemId: input.stableWorkItemId,
+    laneRunId: context.laneRunId ?? input.laneRunId,
+    observedAt: input.observedAt,
+    publicDiagnostics: {
+      stableWorkItemId: input.stableWorkItemId,
+      laneId: context.queueRecord?.laneId ?? context.existingLock?.laneId,
+      source: context.queueRecord?.source ?? context.existingLock?.source,
+      repositoryClassification:
+        context.queueRecord?.repositoryClassification ?? context.existingLock?.repositoryClassification,
+      reason: mismatch.publicMessage,
+    },
+    nextOperatorAction: mismatch.nextOperatorAction,
+    mismatches: [mismatch],
+    evidence: {
+      bundleRefs: [],
+    },
+    queue:
+      context.queueRecord === undefined
+        ? undefined
+        : {
+            status: context.queueRecord.status,
+            enqueueSequence: context.queueRecord.enqueueSequence,
+          },
+    lock:
+      context.existingLock === undefined
+        ? undefined
+        : {
+            status: context.existingLock.status,
+            active: context.existingLock.active,
+            laneRunId: context.existingLock.laneRunId,
+          },
+    startsAgentExecution: false,
   };
 }
 
