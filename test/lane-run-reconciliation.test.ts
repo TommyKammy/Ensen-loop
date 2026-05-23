@@ -360,6 +360,71 @@ test("reconciliation classifies a missing terminal worktree as cleanup-required 
   });
 });
 
+test("reconciliation derives terminal lane run id from queue metadata when input omits it", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await writeLaneState(stateRoot, {
+      status: "completed",
+      evidenceRefs: ["artifacts/evidence/completed-lane.json"],
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "ok");
+    assert.equal(result.laneRunId, "lane-run-113-a");
+    assert.deepEqual(result.evidence.bundleRefs, ["artifacts/evidence/completed-lane.json"]);
+  });
+});
+
+test("reconciliation reports missing terminal lane state derived from queue metadata", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "manual-review");
+    assert.equal(result.laneRunId, "lane-run-113-a");
+    assert.equal(result.publicDiagnostics.reason, "terminal lane run state is missing");
+    assert.equal(result.mismatches[0]?.kind, "missing-lane-state");
+    assert.deepEqual(result.evidence.bundleRefs, []);
+  });
+});
+
 test("reconciliation blocks unlinked terminal targets without reporting active-lock target mismatch", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
@@ -636,6 +701,34 @@ test("reconciliation fails closed for conflicting verification facts", async () 
     assert.equal(result.category, "manual-review");
     assert.equal(result.publicDiagnostics.reason, "verification facts conflict with authoritative lane state");
     assert.equal(result.mismatches[0]?.kind, "conflicting-verification-facts");
+  });
+});
+
+test("reconciliation ignores unknown verification facts as non-authoritative", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await writeLaneState(stateRoot, {
+      status: "completed",
+    });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [
+          { status: "unknown", source: "operator-status" },
+          { status: "succeeded", source: "verification-summary" },
+        ],
+      },
+    });
+
+    assert.equal(result.state, "ok");
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "conflicting-verification-facts"), false);
   });
 });
 

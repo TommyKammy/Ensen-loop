@@ -252,6 +252,7 @@ export type LaneRunReconciliationMismatchKind =
   | "stale-lock"
   | "conflicting-verification-facts"
   | "missing-queue-record"
+  | "missing-lane-state"
   | "lane-run-target-mismatch"
   | "malformed-lane-state"
   | "lane-run-ownership-unverified"
@@ -1158,10 +1159,13 @@ export async function reconcileLaneRunState(
   let laneRunId: string | undefined;
   let state: LaneRunState | undefined;
   let inputLaneRunOwnershipUnverified = false;
+  let terminalQueueLaneRunId: string | undefined;
 
   try {
     queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
+    terminalQueueLaneRunId =
+      queueRecord === undefined ? undefined : readTerminalQueueRecordLaneRunId(queueRecord);
     const inputLaneRunMatchesQueueRecord =
       input.laneRunId !== undefined &&
       queueRecord !== undefined &&
@@ -1184,7 +1188,7 @@ export async function reconcileLaneRunState(
           : inputLaneRunMatchesQueueRecord
           ? input.laneRunId
           : input.laneRunId === undefined
-            ? existingLock?.laneRunId
+            ? (existingLock?.laneRunId ?? terminalQueueLaneRunId)
             : undefined;
     state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
   } catch (error) {
@@ -1296,6 +1300,23 @@ export async function reconcileLaneRunState(
         "safe-to-requeue",
         "active lane run lock has no lane state",
         "stop or remove the stale lock, then requeue explicitly if the issue is still selected",
+      ),
+    );
+  }
+
+  if (
+    existingLock?.active !== true &&
+    state === undefined &&
+    laneRunId !== undefined &&
+    queueRecord !== undefined &&
+    isTerminalQueueRecordLinkedToLaneRun(queueRecord, laneRunId)
+  ) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "missing-lane-state",
+        "manual-review",
+        "terminal lane run state is missing",
+        "restore terminal lane state or manually review preserved evidence before cleanup or requeue",
       ),
     );
   }
@@ -1965,6 +1986,28 @@ function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRu
   }
 
   return false;
+}
+
+function readTerminalQueueRecordLaneRunId(record: LaneRunQueueRecord): string | undefined {
+  const prefix = toTerminalQueueRecordLaneRunIdMetadataPrefix(record);
+
+  if (prefix === undefined) {
+    return undefined;
+  }
+
+  const laneRunId = record.metadata[`${prefix}LaneRunId`];
+
+  return laneRunId !== undefined && isLaneRunId(laneRunId) && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId)
+    ? laneRunId
+    : undefined;
+}
+
+function toTerminalQueueRecordLaneRunIdMetadataPrefix(record: LaneRunQueueRecord): string | undefined {
+  if (record.status === "completed" || record.status === "revoked" || record.status === "superseded") {
+    return record.status;
+  }
+
+  return undefined;
 }
 
 function isLaneRunStateLinkedToSelectedWorkItem(
@@ -2821,7 +2864,11 @@ function hasConflictingVerificationFacts(
     return false;
   }
 
-  const normalizedStatuses = new Set(facts.map((fact) => normalizeVerificationFactStatus(fact.status)));
+  const normalizedStatuses = new Set(
+    facts
+      .map((fact) => normalizeVerificationFactStatus(fact.status))
+      .filter((status): status is Exclude<ReturnType<typeof normalizeVerificationFactStatus>, "unknown"> => status !== "unknown"),
+  );
 
   if (normalizedStatuses.size > 1) {
     return true;
