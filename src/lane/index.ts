@@ -1166,12 +1166,22 @@ export async function reconcileLaneRunState(
       input.laneRunId !== undefined &&
       queueRecord !== undefined &&
       isTerminalQueueRecordLinkedToLaneRun(queueRecord, input.laneRunId);
+    const inputLaneRunMatchesExistingLock =
+      input.laneRunId !== undefined &&
+      existingLock !== undefined &&
+      existingLock.laneRunId === input.laneRunId &&
+      (queueRecord === undefined || isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord));
     inputLaneRunOwnershipUnverified =
-      input.laneRunId !== undefined && existingLock?.active !== true && !inputLaneRunMatchesQueueRecord;
+      input.laneRunId !== undefined &&
+      existingLock?.active !== true &&
+      !inputLaneRunMatchesQueueRecord &&
+      !inputLaneRunMatchesExistingLock;
     laneRunId =
       existingLock?.active === true
         ? existingLock.laneRunId
-        : inputLaneRunMatchesQueueRecord
+        : inputLaneRunMatchesExistingLock
+          ? input.laneRunId
+          : inputLaneRunMatchesQueueRecord
           ? input.laneRunId
           : input.laneRunId === undefined
             ? existingLock?.laneRunId
@@ -1227,7 +1237,7 @@ export async function reconcileLaneRunState(
     );
   }
 
-  let laneRunStateOwnershipUnverified = false;
+  let laneRunStateOwnershipRejected = false;
 
   if (inputLaneRunOwnershipUnverified) {
     mismatches.push(
@@ -1249,7 +1259,7 @@ export async function reconcileLaneRunState(
         "restore the queue record or remove the unverified lock before exposing lane evidence",
       ),
     );
-    laneRunStateOwnershipUnverified = true;
+    laneRunStateOwnershipRejected = true;
     state = undefined;
   } else if (state !== undefined && queueRecord !== undefined && state.workItemId !== queueRecord.workItemId) {
     mismatches.push(
@@ -1260,10 +1270,26 @@ export async function reconcileLaneRunState(
         "retry reconciliation with the authoritative lane run id for the selected issue",
       ),
     );
+    laneRunStateOwnershipRejected = true;
+    state = undefined;
+  } else if (
+    state !== undefined &&
+    queueRecord !== undefined &&
+    !isLaneRunStateLinkedToSelectedWorkItem(state, queueRecord, existingLock)
+  ) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-ownership-unverified",
+        "blocked",
+        "lane run state ownership is unverifiable",
+        "restore the queue record or retry reconciliation with a lane run id linked to the selected issue identity",
+      ),
+    );
+    laneRunStateOwnershipRejected = true;
     state = undefined;
   }
 
-  if (existingLock?.active === true && state === undefined && !laneRunStateOwnershipUnverified) {
+  if (existingLock?.active === true && state === undefined && !laneRunStateOwnershipRejected) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "stale-lock",
@@ -1939,6 +1965,31 @@ function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRu
   }
 
   return false;
+}
+
+function isLaneRunStateLinkedToSelectedWorkItem(
+  state: LaneRunState,
+  record: LaneRunQueueRecord,
+  lock: LaneRunLock | undefined,
+): boolean {
+  if (lock?.laneRunId === state.id && isLaneRunLockContextCompatibleWithQueueRecord(lock, record)) {
+    return true;
+  }
+
+  return isTerminalQueueRecordLinkedToLaneRun(record, state.id);
+}
+
+function isLaneRunLockContextCompatibleWithQueueRecord(lock: LaneRunLock, record: LaneRunQueueRecord): boolean {
+  if (
+    lock.stableWorkItemId !== record.stableWorkItemId ||
+    lock.source !== record.source ||
+    lock.laneId !== record.laneId ||
+    lock.repositoryClassification !== record.repositoryClassification
+  ) {
+    return false;
+  }
+
+  return lock.active === true ? lock.queueRecordId === record.id : true;
 }
 
 function createLaneRunIdQueueMetadata(prefix: string, laneRunId: string): Record<string, string> {
