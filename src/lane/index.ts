@@ -253,7 +253,9 @@ export type LaneRunReconciliationMismatchKind =
   | "conflicting-verification-facts"
   | "missing-queue-record"
   | "lane-run-target-mismatch"
-  | "malformed-lane-state";
+  | "malformed-lane-state"
+  | "lane-run-work-item-mismatch"
+  | "lock-queue-record-mismatch";
 
 export interface LaneRunObservedSurface {
   readonly expected: boolean;
@@ -1158,7 +1160,14 @@ export async function reconcileLaneRunState(
   try {
     queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
-    laneRunId = existingLock?.active === true ? existingLock.laneRunId : input.laneRunId ?? existingLock?.laneRunId;
+    laneRunId =
+      existingLock?.active === true
+        ? existingLock.laneRunId
+        : input.laneRunId !== undefined && queueRecord !== undefined
+          ? input.laneRunId
+          : input.laneRunId === undefined
+            ? existingLock?.laneRunId
+            : undefined;
     state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
   } catch (error) {
     if (isMalformedLaneRunStateError(error)) {
@@ -1185,6 +1194,17 @@ export async function reconcileLaneRunState(
     );
   }
 
+  if (existingLock?.active === true && queueRecord !== undefined && existingLock.queueRecordId !== queueRecord.id) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lock-queue-record-mismatch",
+        "blocked",
+        "active lane run lock does not match the queue record",
+        "stop reconciliation and repair queue or lock state before retrying",
+      ),
+    );
+  }
+
   if (existingLock?.active === true && input.laneRunId !== undefined && existingLock.laneRunId !== input.laneRunId) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
@@ -1194,6 +1214,18 @@ export async function reconcileLaneRunState(
         "inspect the selected issue and retry reconciliation with the authoritative lane run id",
       ),
     );
+  }
+
+  if (state !== undefined && queueRecord !== undefined && state.workItemId !== queueRecord.workItemId) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-work-item-mismatch",
+        "blocked",
+        "lane run state does not belong to the requested work item",
+        "retry reconciliation with the authoritative lane run id for the selected issue",
+      ),
+    );
+    state = undefined;
   }
 
   if (existingLock?.active === true && state === undefined) {
@@ -1252,12 +1284,15 @@ export async function reconcileLaneRunState(
   }
 
   if (isMissingExpectedSurface(input.surfaces.prDraft)) {
+    const activeLock = existingLock?.active === true;
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "missing-pr-draft",
-        "safe-to-requeue",
-        "lane run is missing its PR draft reference",
-        "requeue explicitly after confirming no draft PR exists for this lane",
+        activeLock ? "blocked" : "safe-to-requeue",
+        activeLock ? "active lane run is missing its PR draft reference" : "lane run is missing its PR draft reference",
+        activeLock
+          ? "stop the active lane run, inspect evidence, then requeue explicitly if safe"
+          : "requeue explicitly after confirming no draft PR exists for this lane",
         input.surfaces.prDraft?.ref,
       ),
     );

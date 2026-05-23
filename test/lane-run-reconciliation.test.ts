@@ -13,6 +13,7 @@ import {
   readLaneRunLock,
   readLaneRunQueueRecord,
   reconcileLaneRunState,
+  resolveLaneRunLockPath,
   writeLaneRunState,
 } from "../src/lane/index.js";
 
@@ -58,17 +59,19 @@ async function writeLaneState(
   input: {
     readonly laneRunId?: string;
     readonly status?: "running" | "completed" | "failed" | "blocked";
+    readonly workItemId?: string;
     readonly journalEntries?: Parameters<typeof createLaneJournal>[0]["entries"];
     readonly evidenceRefs?: readonly string[];
   } = {},
 ): Promise<void> {
   const laneRunId = input.laneRunId ?? "lane-run-113-a";
+  const workItemId = input.workItemId ?? "issue-113";
 
   await writeLaneRunState(
     stateRoot,
     createLaneRunState({
       id: laneRunId,
-      workItemId: "issue-113",
+      workItemId,
       status: input.status ?? "running",
       revision: 1,
       createdAt: claimedAt,
@@ -76,7 +79,7 @@ async function writeLaneState(
       journal: createLaneJournal({
         id: `journal-${laneRunId}`,
         laneRunId,
-        workItemId: "issue-113",
+        workItemId,
         entries:
           input.journalEntries ??
           [
@@ -182,6 +185,36 @@ test("reconciliation reads authoritative active lock state before reporting targ
   });
 });
 
+test("reconciliation blocks active lock and queue record divergence", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const { claim } = await queueAndClaim(stateRoot);
+    await writeLaneState(stateRoot);
+    await writeFile(
+      resolveLaneRunLockPath(stateRoot, "github-issue-113"),
+      JSON.stringify({ ...claim.lock, queueRecordId: "queue-github-issue-113-999" }),
+      "utf8",
+    );
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "active lane run lock does not match the queue record");
+    assert.equal(result.mismatches[0]?.kind, "lock-queue-record-mismatch");
+  });
+});
+
 test("reconciliation classifies a missing terminal worktree as cleanup-required without deleting evidence", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
@@ -251,6 +284,46 @@ test("reconciliation ignores target mismatch for terminal historical locks", asy
   });
 });
 
+test("reconciliation blocks cross-work-item lane state without exposing evidence", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      workItemId: "issue-113",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "113",
+      },
+    });
+    await writeLaneState(stateRoot, {
+      laneRunId: "lane-run-999-a",
+      workItemId: "issue-999",
+      evidenceRefs: ["artifacts/evidence/other-issue-private.json"],
+    });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-999-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-999" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "lane run state does not belong to the requested work item");
+    assert.equal(result.mismatches[0]?.kind, "lane-run-work-item-mismatch");
+    assert.deepEqual(result.evidence.bundleRefs, []);
+  });
+});
+
 test("reconciliation sends missing journal evidence to manual review", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
@@ -302,6 +375,32 @@ test("reconciliation returns blocked diagnostics for malformed lane state", asyn
     assert.equal(result.nextOperatorAction, "repair or remove malformed lane state before continuing");
     assert.equal(result.mismatches[0]?.kind, "malformed-lane-state");
     assert.deepEqual(result.evidence.bundleRefs, []);
+  });
+});
+
+test("reconciliation blocks missing PR draft advice for active lane runs", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await writeLaneState(stateRoot);
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: true, exists: false, ref: "draft-pr" },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "active lane run is missing its PR draft reference");
+    assert.equal(result.nextOperatorAction, "stop the active lane run, inspect evidence, then requeue explicitly if safe");
+    assert.equal(result.mismatches[0]?.kind, "missing-pr-draft");
   });
 });
 
