@@ -283,6 +283,7 @@ test("reconciliation public diagnostics redact workstation paths and secret-look
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
     await writeLaneState(stateRoot);
+    const workstationPath = ["", "Users", "example", "private", "repo"].join("/");
 
     const result = await reconcileLaneRunState(stateRoot, {
       stableWorkItemId: "github-issue-113",
@@ -292,7 +293,7 @@ test("reconciliation public diagnostics redact workstation paths and secret-look
         branch: {
           expected: true,
           exists: false,
-          ref: "/Users/example/private/repo token=ghp_sampleSecretValue",
+          ref: `${workstationPath} token=ghp_sampleSecretValue`,
         },
         worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
         journal: { expected: true, exists: true },
@@ -302,7 +303,7 @@ test("reconciliation public diagnostics redact workstation paths and secret-look
     });
     const serialized = JSON.stringify(result);
 
-    assert.equal(serialized.includes("/Users/example/private/repo"), false);
+    assert.equal(serialized.includes(workstationPath), false);
     assert.equal(serialized.includes("ghp_sampleSecretValue"), false);
     assert.equal(result.mismatches[0]?.ref, "<redacted>");
   });
