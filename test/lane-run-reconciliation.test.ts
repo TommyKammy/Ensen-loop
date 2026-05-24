@@ -1002,6 +1002,29 @@ test("reconciliation returns blocked diagnostics for malformed surfaces input", 
 
 test("reconciliation returns blocked diagnostics for malformed timestamp and lane id input", async () => {
   await withStateRoot(async (stateRoot) => {
+    const invalidStableWorkItemIdResult = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github/issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+    } as unknown as Parameters<typeof reconcileLaneRunState>[1]);
+
+    assert.equal(invalidStableWorkItemIdResult.state, "blocked");
+    assert.equal(invalidStableWorkItemIdResult.category, "blocked");
+    assert.equal(invalidStableWorkItemIdResult.stableWorkItemId, "invalid-stable-work-item-id");
+    assert.equal(
+      invalidStableWorkItemIdResult.publicDiagnostics.stableWorkItemId,
+      "invalid-stable-work-item-id",
+    );
+    assert.equal(
+      invalidStableWorkItemIdResult.publicDiagnostics.reason,
+      "lane run reconciliation input is malformed",
+    );
+    assert.equal(invalidStableWorkItemIdResult.mismatches[0]?.kind, "malformed-reconciliation-input");
+    assert.equal(
+      invalidStableWorkItemIdResult.nextOperatorAction,
+      "provide a valid stable work item id before retrying",
+    );
+
     const invalidObservedAtResult = await reconcileLaneRunState(stateRoot, {
       stableWorkItemId: "github-issue-113",
       laneRunId: "lane-run-113-a",

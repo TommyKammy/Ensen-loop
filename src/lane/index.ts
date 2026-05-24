@@ -1162,7 +1162,12 @@ export async function reconcileLaneRunState(
   stateRoot: string,
   input: ReconcileLaneRunStateInput,
 ): Promise<LaneRunReconciliationResult> {
-  assertSafeStableWorkItemId(input.stableWorkItemId);
+  if (!isSafeStableWorkItemId(input.stableWorkItemId)) {
+    return createMalformedReconciliationInputResult(
+      input,
+      "provide a valid stable work item id before retrying",
+    );
+  }
 
   if (!isIsoDateTime(input.observedAt)) {
     return createMalformedReconciliationInputResult(
@@ -3220,7 +3225,9 @@ function createMalformedLaneRunReconciliationResult(
     schemaVersion: "ensen.lane-run-reconciliation.v1",
     state: "blocked",
     category: "blocked",
-    stableWorkItemId: input.stableWorkItemId,
+    stableWorkItemId: isSafeStableWorkItemId(input.stableWorkItemId)
+      ? input.stableWorkItemId
+      : "invalid-stable-work-item-id",
     laneRunId: context.laneRunId ?? input.laneRunId,
     observedAt: input.observedAt,
     publicDiagnostics: {
@@ -3259,6 +3266,9 @@ function createMalformedReconciliationInputResult(
   input: ReconcileLaneRunStateInput,
   nextOperatorAction: string,
 ): LaneRunReconciliationResult {
+  const stableWorkItemId = isSafeStableWorkItemId(input.stableWorkItemId)
+    ? input.stableWorkItemId
+    : "invalid-stable-work-item-id";
   const mismatch = createLaneRunReconciliationMismatch(
     "malformed-reconciliation-input",
     "blocked",
@@ -3270,11 +3280,11 @@ function createMalformedReconciliationInputResult(
     schemaVersion: "ensen.lane-run-reconciliation.v1",
     state: "blocked",
     category: "blocked",
-    stableWorkItemId: input.stableWorkItemId,
+    stableWorkItemId,
     laneRunId: isLaneRunId(input.laneRunId) ? input.laneRunId : undefined,
     observedAt: isIsoDateTime(input.observedAt) ? input.observedAt : "1970-01-01T00:00:00.000Z",
     publicDiagnostics: {
-      stableWorkItemId: input.stableWorkItemId,
+      stableWorkItemId,
       reason: mismatch.publicMessage,
     },
     nextOperatorAction: mismatch.nextOperatorAction,
@@ -3492,6 +3502,10 @@ function assertSafeStableWorkItemId(stableWorkItemId: string): void {
 }
 
 function isSafeStableWorkItemId(stableWorkItemId: string): boolean {
+  if (typeof stableWorkItemId !== "string") {
+    return false;
+  }
+
   if (!stableWorkItemIdPattern.test(stableWorkItemId)) {
     return false;
   }
