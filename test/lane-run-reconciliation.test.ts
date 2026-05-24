@@ -476,6 +476,53 @@ test("reconciliation recovers truncated terminal metadata from the lane run id d
   });
 });
 
+test("reconciliation recovers terminal lane run id from digest when plain metadata id is invalid", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await writeLaneState(stateRoot, {
+      status: "completed",
+      evidenceRefs: ["artifacts/evidence/completed-lane.json"],
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-113");
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-113"),
+      JSON.stringify({
+        ...queue,
+        metadata: {
+          ...queue.metadata,
+          completedLaneRunId: "invalid/lane-run-id",
+          completedLaneRunIdSha256: laneRunIdDigest("lane-run-113-a"),
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "ok");
+    assert.equal(result.laneRunId, "lane-run-113-a");
+    assert.deepEqual(result.evidence.bundleRefs, ["artifacts/evidence/completed-lane.json"]);
+  });
+});
+
 test("reconciliation prefers terminal queue metadata over an incompatible terminal lock", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
@@ -512,6 +559,84 @@ test("reconciliation prefers terminal queue metadata over an incompatible termin
     assert.equal(result.state, "ok");
     assert.equal(result.laneRunId, "lane-run-113-a");
     assert.deepEqual(result.evidence.bundleRefs, ["artifacts/evidence/completed-lane.json"]);
+  });
+});
+
+test("reconciliation reports terminal metadata mismatch when digest recovery cannot scan lane state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const longLaneRunId = `lane-run-113-${"a".repeat(260)}`;
+
+    await queueAndClaim(stateRoot, longLaneRunId);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: longLaneRunId,
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+    await rm(path.join(stateRoot, "lane-runs"), { recursive: true, force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "manual-review");
+    assert.equal(result.publicDiagnostics.reason, "terminal lane run metadata is inconsistent");
+    assert.equal(result.mismatches[0]?.kind, "terminal-metadata-mismatch");
+  });
+});
+
+test("reconciliation reports terminal metadata mismatch when plain id and digest disagree", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-113");
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-113"),
+      JSON.stringify({
+        ...queue,
+        metadata: {
+          ...queue.metadata,
+          completedLaneRunId: "lane-run-113-a",
+          completedLaneRunIdSha256: laneRunIdDigest("lane-run-113-b"),
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "manual-review");
+    assert.equal(result.laneRunId, undefined);
+    assert.equal(result.publicDiagnostics.reason, "terminal lane run metadata is inconsistent");
+    assert.equal(result.mismatches[0]?.kind, "terminal-metadata-mismatch");
   });
 });
 
@@ -810,6 +935,38 @@ test("reconciliation returns blocked diagnostics for malformed surfaces input", 
       malformedFactsResult.nextOperatorAction,
       "provide verification facts with source and status fields before retrying",
     );
+  });
+});
+
+test("reconciliation returns blocked diagnostics for malformed timestamp and lane id input", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const invalidObservedAtResult = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt: "not-a-timestamp",
+    } as unknown as Parameters<typeof reconcileLaneRunState>[1]);
+
+    assert.equal(invalidObservedAtResult.state, "blocked");
+    assert.equal(invalidObservedAtResult.category, "blocked");
+    assert.equal(invalidObservedAtResult.publicDiagnostics.reason, "lane run reconciliation input is malformed");
+    assert.equal(invalidObservedAtResult.mismatches[0]?.kind, "malformed-reconciliation-input");
+    assert.equal(
+      invalidObservedAtResult.nextOperatorAction,
+      "provide a valid ISO observedAt timestamp before retrying",
+    );
+
+    const invalidLaneRunIdResult = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "unsafe/lane-run",
+      observedAt,
+    } as unknown as Parameters<typeof reconcileLaneRunState>[1]);
+
+    assert.equal(invalidLaneRunIdResult.state, "blocked");
+    assert.equal(invalidLaneRunIdResult.category, "blocked");
+    assert.equal(invalidLaneRunIdResult.laneRunId, undefined);
+    assert.equal(invalidLaneRunIdResult.publicDiagnostics.reason, "lane run reconciliation input is malformed");
+    assert.equal(invalidLaneRunIdResult.mismatches[0]?.kind, "malformed-reconciliation-input");
+    assert.equal(invalidLaneRunIdResult.nextOperatorAction, "provide a valid lane run id before retrying");
   });
 });
 

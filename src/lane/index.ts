@@ -254,6 +254,7 @@ export type LaneRunReconciliationMismatchKind =
   | "missing-queue-record"
   | "missing-lane-state"
   | "malformed-reconciliation-input"
+  | "terminal-metadata-mismatch"
   | "lane-run-target-mismatch"
   | "malformed-lane-state"
   | "lane-run-ownership-unverified"
@@ -286,6 +287,9 @@ export interface ReconcileLaneRunStateInput {
 }
 
 type LaneRunReconciliationSurfaces = ReconcileLaneRunStateInput["surfaces"];
+type TerminalQueueRecordLaneRunIdResolution =
+  | { readonly laneRunId?: string; readonly metadataMismatch?: false }
+  | { readonly laneRunId?: undefined; readonly metadataMismatch: true };
 
 export interface LaneRunReconciliationMismatch {
   readonly kind: LaneRunReconciliationMismatchKind;
@@ -1160,8 +1164,15 @@ export async function reconcileLaneRunState(
 ): Promise<LaneRunReconciliationResult> {
   assertSafeStableWorkItemId(input.stableWorkItemId);
 
-  if (!isIsoDateTime(input.observedAt) || (input.laneRunId !== undefined && !isLaneRunId(input.laneRunId))) {
-    throw new Error("Lane run reconciliation input is malformed.");
+  if (!isIsoDateTime(input.observedAt)) {
+    return createMalformedReconciliationInputResult(
+      input,
+      "provide a valid ISO observedAt timestamp before retrying",
+    );
+  }
+
+  if (input.laneRunId !== undefined && !isLaneRunId(input.laneRunId)) {
+    return createMalformedReconciliationInputResult(input, "provide a valid lane run id before retrying");
   }
 
   const surfacesResult = parseLaneRunReconciliationSurfaces(
@@ -1180,12 +1191,17 @@ export async function reconcileLaneRunState(
   let state: LaneRunState | undefined;
   let inputLaneRunOwnershipUnverified = false;
   let terminalQueueLaneRunId: string | undefined;
+  let terminalQueueLaneRunMetadataMismatch = false;
 
   try {
     queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
-    terminalQueueLaneRunId =
-      queueRecord === undefined ? undefined : await readTerminalQueueRecordLaneRunId(stateRoot, queueRecord);
+    const terminalQueueLaneRunResolution =
+      queueRecord === undefined
+        ? undefined
+        : await readTerminalQueueRecordLaneRunId(stateRoot, queueRecord);
+    terminalQueueLaneRunId = terminalQueueLaneRunResolution?.laneRunId;
+    terminalQueueLaneRunMetadataMismatch = terminalQueueLaneRunResolution?.metadataMismatch === true;
     const existingLockMatchesQueueRecord =
       existingLock !== undefined &&
       (queueRecord === undefined || isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord));
@@ -1290,6 +1306,17 @@ export async function reconcileLaneRunState(
         "blocked",
         "lane run state ownership is unverifiable",
         "restore the queue record or retry reconciliation with the lane run id linked to the selected issue",
+      ),
+    );
+  }
+
+  if (terminalQueueLaneRunMetadataMismatch) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "terminal-metadata-mismatch",
+        "manual-review",
+        "terminal lane run metadata is inconsistent",
+        "manually review terminal queue metadata before exposing evidence, cleanup, or requeue",
       ),
     );
   }
@@ -2031,31 +2058,39 @@ function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRu
 async function readTerminalQueueRecordLaneRunId(
   stateRoot: string,
   record: LaneRunQueueRecord,
-): Promise<string | undefined> {
+): Promise<TerminalQueueRecordLaneRunIdResolution> {
   const prefix = toTerminalQueueRecordLaneRunIdMetadataPrefix(record);
 
   if (prefix === undefined) {
-    return undefined;
+    return {};
   }
 
   const laneRunId = record.metadata[`${prefix}LaneRunId`];
   const digest = record.metadata[`${prefix}LaneRunIdSha256`];
 
   if (laneRunId !== undefined && isLaneRunId(laneRunId)) {
-    const digestMatchesMetadata = digest === undefined || digest === createLaneRunIdDigest(laneRunId);
+    if (isTruncatedLaneRunIdMetadataValue(laneRunId, digest)) {
+      const recoveredLaneRunId = await readLaneRunIdByDigest(stateRoot, digest);
 
-    if (digestMatchesMetadata && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId)) {
-      return laneRunId;
+      return recoveredLaneRunId === undefined ? { metadataMismatch: true } : { laneRunId: recoveredLaneRunId };
     }
 
-    if (!isTruncatedLaneRunIdMetadataValue(laneRunId, digest)) {
-      return undefined;
+    if (digest !== undefined && (!isLaneRunIdDigest(digest) || digest !== createLaneRunIdDigest(laneRunId))) {
+      return { metadataMismatch: true };
     }
-  } else if (laneRunId !== undefined) {
-    return undefined;
+
+    return isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId)
+      ? { laneRunId }
+      : { metadataMismatch: true };
   }
 
-  return digest === undefined ? undefined : await readLaneRunIdByDigest(stateRoot, digest);
+  if (digest === undefined) {
+    return laneRunId === undefined ? {} : { metadataMismatch: true };
+  }
+
+  const recoveredLaneRunId = await readLaneRunIdByDigest(stateRoot, digest);
+
+  return recoveredLaneRunId === undefined ? { metadataMismatch: true } : { laneRunId: recoveredLaneRunId };
 }
 
 async function readLaneRunIdByDigest(stateRoot: string, digest: string): Promise<string | undefined> {
@@ -2076,7 +2111,13 @@ async function readLaneRunIdByDigest(stateRoot: string, digest: string): Promise
     throw error;
   }
 
-  const entries = await readdir(laneRunsRoot, { withFileTypes: true });
+  const entries = await readdir(laneRunsRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return [];
+    }
+
+    throw error;
+  });
 
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) {
@@ -2147,11 +2188,11 @@ function isLaneRunIdMetadataMatch(
   laneRunId: string,
 ): boolean {
   const projectedLaneRunId = metadata[`${prefix}LaneRunId`];
+  const projectedLaneRunIdDigest = metadata[`${prefix}LaneRunIdSha256`];
 
-  return (
-    projectedLaneRunId === laneRunId ||
-    (projectedLaneRunId !== undefined && metadata[`${prefix}LaneRunIdSha256`] === createLaneRunIdDigest(laneRunId))
-  );
+  return projectedLaneRunIdDigest === undefined
+    ? projectedLaneRunId === laneRunId
+    : projectedLaneRunIdDigest === createLaneRunIdDigest(laneRunId);
 }
 
 function createLaneRunIdDigest(laneRunId: string): string {
@@ -3223,8 +3264,8 @@ function createMalformedReconciliationInputResult(
     state: "blocked",
     category: "blocked",
     stableWorkItemId: input.stableWorkItemId,
-    laneRunId: input.laneRunId,
-    observedAt: input.observedAt,
+    laneRunId: isLaneRunId(input.laneRunId) ? input.laneRunId : undefined,
+    observedAt: isIsoDateTime(input.observedAt) ? input.observedAt : "1970-01-01T00:00:00.000Z",
     publicDiagnostics: {
       stableWorkItemId: input.stableWorkItemId,
       reason: mismatch.publicMessage,
