@@ -1165,7 +1165,10 @@ export async function reconcileLaneRunState(
     queueRecord = await readOptionalLaneRunQueueRecord(stateRoot, input.stableWorkItemId);
     existingLock = await readOptionalLaneRunLock(stateRoot, input.stableWorkItemId);
     terminalQueueLaneRunId =
-      queueRecord === undefined ? undefined : readTerminalQueueRecordLaneRunId(queueRecord);
+      queueRecord === undefined ? undefined : await readTerminalQueueRecordLaneRunId(stateRoot, queueRecord);
+    const existingLockMatchesQueueRecord =
+      existingLock !== undefined &&
+      (queueRecord === undefined || isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord));
     const inputLaneRunMatchesQueueRecord =
       input.laneRunId !== undefined &&
       queueRecord !== undefined &&
@@ -1174,7 +1177,7 @@ export async function reconcileLaneRunState(
       input.laneRunId !== undefined &&
       existingLock !== undefined &&
       existingLock.laneRunId === input.laneRunId &&
-      (queueRecord === undefined || isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord));
+      existingLockMatchesQueueRecord;
     inputLaneRunOwnershipUnverified =
       input.laneRunId !== undefined &&
       existingLock?.active !== true &&
@@ -1188,7 +1191,7 @@ export async function reconcileLaneRunState(
           : inputLaneRunMatchesQueueRecord
           ? input.laneRunId
           : input.laneRunId === undefined
-            ? (existingLock?.laneRunId ?? terminalQueueLaneRunId)
+            ? (terminalQueueLaneRunId ?? (existingLockMatchesQueueRecord ? existingLock?.laneRunId : undefined))
             : undefined;
     state = laneRunId === undefined ? undefined : await readOptionalLaneRunState(stateRoot, laneRunId);
   } catch (error) {
@@ -1242,6 +1245,23 @@ export async function reconcileLaneRunState(
   }
 
   let laneRunStateOwnershipRejected = false;
+
+  if (
+    existingLock?.active === true &&
+    queueRecord !== undefined &&
+    !isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord)
+  ) {
+    mismatches.push(
+      createLaneRunReconciliationMismatch(
+        "lane-run-ownership-unverified",
+        "blocked",
+        "active lane run lock context does not match the queue record",
+        "repair queue or lock identity before exposing lane evidence or requeueing",
+      ),
+    );
+    laneRunStateOwnershipRejected = true;
+    state = undefined;
+  }
 
   if (inputLaneRunOwnershipUnverified) {
     mismatches.push(
@@ -1988,7 +2008,10 @@ function isTerminalQueueRecordLinkedToLaneRun(record: LaneRunQueueRecord, laneRu
   return false;
 }
 
-function readTerminalQueueRecordLaneRunId(record: LaneRunQueueRecord): string | undefined {
+async function readTerminalQueueRecordLaneRunId(
+  stateRoot: string,
+  record: LaneRunQueueRecord,
+): Promise<string | undefined> {
   const prefix = toTerminalQueueRecordLaneRunIdMetadataPrefix(record);
 
   if (prefix === undefined) {
@@ -1996,10 +2019,56 @@ function readTerminalQueueRecordLaneRunId(record: LaneRunQueueRecord): string | 
   }
 
   const laneRunId = record.metadata[`${prefix}LaneRunId`];
+  const digest = record.metadata[`${prefix}LaneRunIdSha256`];
 
-  return laneRunId !== undefined && isLaneRunId(laneRunId) && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId)
-    ? laneRunId
-    : undefined;
+  if (laneRunId !== undefined && !isTruncatedLaneRunIdMetadataValue(laneRunId)) {
+    return isLaneRunId(laneRunId) && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId) ? laneRunId : undefined;
+  }
+
+  return digest === undefined ? undefined : await readLaneRunIdByDigest(stateRoot, digest);
+}
+
+async function readLaneRunIdByDigest(stateRoot: string, digest: string): Promise<string | undefined> {
+  if (!isLaneRunIdDigest(digest)) {
+    return undefined;
+  }
+
+  const realRoot = await resolveCanonicalStateRoot(stateRoot);
+  const laneRunsRoot = path.join(path.resolve(stateRoot), "lane-runs");
+
+  try {
+    await assertExistingPathSafe(realRoot, laneRunsRoot, "directory");
+  } catch (error) {
+    if (isNodeError(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+
+    throw error;
+  }
+
+  const entries = await readdir(laneRunsRoot, { withFileTypes: true });
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.endsWith(".json")) {
+      continue;
+    }
+
+    const laneRunId = entry.name.slice(0, -".json".length);
+
+    if (isLaneRunId(laneRunId) && createLaneRunIdDigest(laneRunId) === digest) {
+      return laneRunId;
+    }
+  }
+
+  return undefined;
+}
+
+function isTruncatedLaneRunIdMetadataValue(value: string): boolean {
+  return value.length === 256 && value.endsWith("...");
+}
+
+function isLaneRunIdDigest(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value);
 }
 
 function toTerminalQueueRecordLaneRunIdMetadataPrefix(record: LaneRunQueueRecord): string | undefined {

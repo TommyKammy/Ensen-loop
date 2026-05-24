@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -22,6 +23,10 @@ import {
 const queuedAt = "2026-05-23T05:00:00.000Z";
 const claimedAt = "2026-05-23T05:01:00.000Z";
 const observedAt = "2026-05-23T05:02:00.000Z";
+
+function laneRunIdDigest(laneRunId: string): string {
+  return createHash("sha256").update(laneRunId).digest("hex");
+}
 
 async function withStateRoot(callback: (stateRoot: string) => Promise<void>): Promise<void> {
   const stateRoot = await mkdtemp(path.join(os.tmpdir(), "ensen-loop-state-"));
@@ -244,7 +249,38 @@ test("reconciliation blocks lock identity drift without exposing same-work-item 
 
     assert.equal(result.state, "blocked");
     assert.equal(result.category, "blocked");
-    assert.equal(result.publicDiagnostics.reason, "lane run state ownership is unverifiable");
+    assert.equal(result.publicDiagnostics.reason, "active lane run lock context does not match the queue record");
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "lane-run-ownership-unverified"), true);
+    assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "stale-lock"), false);
+    assert.deepEqual(result.evidence.bundleRefs, []);
+  });
+});
+
+test("reconciliation blocks stale-lock advice when active lock identity drifts without lane state", async () => {
+  await withStateRoot(async (stateRoot) => {
+    const { claim } = await queueAndClaim(stateRoot);
+    await writeFile(
+      resolveLaneRunLockPath(stateRoot, "github-issue-113"),
+      JSON.stringify({ ...claim.lock, source: "manual-import" }),
+      "utf8",
+    );
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "running", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "blocked");
+    assert.equal(result.category, "blocked");
+    assert.equal(result.publicDiagnostics.reason, "active lane run lock context does not match the queue record");
     assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "lane-run-ownership-unverified"), true);
     assert.equal(result.mismatches.some((mismatch) => mismatch.kind === "stale-lock"), false);
     assert.deepEqual(result.evidence.bundleRefs, []);
@@ -374,6 +410,92 @@ test("reconciliation derives terminal lane run id from queue metadata when input
       evidenceRefs: ["artifacts/evidence/completed-lane.json"],
     });
     await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "ok");
+    assert.equal(result.laneRunId, "lane-run-113-a");
+    assert.deepEqual(result.evidence.bundleRefs, ["artifacts/evidence/completed-lane.json"]);
+  });
+});
+
+test("reconciliation recovers truncated terminal metadata from the lane run id digest", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await writeLaneState(stateRoot, {
+      status: "completed",
+      evidenceRefs: ["artifacts/evidence/completed-lane.json"],
+    });
+    await rm(resolveLaneRunLockPath(stateRoot, "github-issue-113"), { force: true });
+
+    const queue = await readLaneRunQueueRecord(stateRoot, "github-issue-113");
+    await writeFile(
+      resolveLaneRunQueueRecordPath(stateRoot, "github-issue-113"),
+      JSON.stringify({
+        ...queue,
+        metadata: {
+          ...queue.metadata,
+          completedLaneRunId: `${"lane-run-113-".padEnd(253, "a")}...`,
+          completedLaneRunIdSha256: laneRunIdDigest("lane-run-113-a"),
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await reconcileLaneRunState(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      observedAt,
+      surfaces: {
+        branch: { expected: true, exists: true, ref: "codex/issue-113" },
+        worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+        journal: { expected: true, exists: true },
+        prDraft: { expected: false, exists: false },
+        verificationFacts: [{ status: "succeeded", source: "operator-status" }],
+      },
+    });
+
+    assert.equal(result.state, "ok");
+    assert.equal(result.laneRunId, "lane-run-113-a");
+    assert.deepEqual(result.evidence.bundleRefs, ["artifacts/evidence/completed-lane.json"]);
+  });
+});
+
+test("reconciliation prefers terminal queue metadata over an incompatible terminal lock", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await completeLaneRunLock(stateRoot, {
+      stableWorkItemId: "github-issue-113",
+      laneRunId: "lane-run-113-a",
+      completedAt: observedAt,
+      terminalStatus: "completed",
+    });
+    await writeLaneState(stateRoot, {
+      status: "completed",
+      evidenceRefs: ["artifacts/evidence/completed-lane.json"],
+    });
+
+    const terminalLock = await readLaneRunLock(stateRoot, "github-issue-113");
+    await writeFile(
+      resolveLaneRunLockPath(stateRoot, "github-issue-113"),
+      JSON.stringify({ ...terminalLock, laneRunId: "lane-run-113-b", source: "manual-import" }),
+      "utf8",
+    );
 
     const result = await reconcileLaneRunState(stateRoot, {
       stableWorkItemId: "github-issue-113",
