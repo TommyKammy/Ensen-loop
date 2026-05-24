@@ -1209,6 +1209,8 @@ export async function reconcileLaneRunState(
       input.laneRunId !== undefined &&
       queueRecord !== undefined &&
       isTerminalQueueRecordLinkedToLaneRun(queueRecord, input.laneRunId);
+    const activeLockMatchesQueueRecord =
+      existingLock?.active === true && existingLockMatchesQueueRecord;
     const inputLaneRunMatchesExistingLock =
       input.laneRunId !== undefined &&
       existingLock !== undefined &&
@@ -1220,8 +1222,8 @@ export async function reconcileLaneRunState(
       !inputLaneRunMatchesQueueRecord &&
       !inputLaneRunMatchesExistingLock;
     laneRunId =
-      existingLock?.active === true
-        ? existingLock.laneRunId
+      activeLockMatchesQueueRecord
+        ? existingLock!.laneRunId
         : inputLaneRunMatchesExistingLock
           ? input.laneRunId
           : inputLaneRunMatchesQueueRecord
@@ -1269,7 +1271,12 @@ export async function reconcileLaneRunState(
     );
   }
 
-  if (existingLock?.active === true && input.laneRunId !== undefined && existingLock.laneRunId !== input.laneRunId) {
+  if (
+    existingLock?.active === true &&
+    (queueRecord === undefined || isLaneRunLockContextCompatibleWithQueueRecord(existingLock, queueRecord)) &&
+    input.laneRunId !== undefined &&
+    existingLock.laneRunId !== input.laneRunId
+  ) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "lane-run-target-mismatch",
@@ -2223,7 +2230,7 @@ async function readOptionalLaneRunState(
   try {
     return await readLaneRunState(stateRoot, laneRunId);
   } catch (error) {
-    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENAMETOOLONG")) {
+    if (isNodeError(error) && error.code === "ENOENT") {
       return undefined;
     }
 
@@ -3308,7 +3315,7 @@ function isMalformedLaneRunStateError(error: unknown): boolean {
   );
 }
 
-const malformedLaneRunStateErrorCodes = new Set(["EISDIR", "ENOTDIR"]);
+const malformedLaneRunStateErrorCodes = new Set(["EISDIR", "ENAMETOOLONG", "ENOTDIR"]);
 
 async function readOptionalLaneRunQueueRecord(
   stateRoot: string,
