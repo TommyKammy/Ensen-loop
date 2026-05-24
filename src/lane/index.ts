@@ -253,6 +253,7 @@ export type LaneRunReconciliationMismatchKind =
   | "conflicting-verification-facts"
   | "missing-queue-record"
   | "missing-lane-state"
+  | "malformed-reconciliation-input"
   | "lane-run-target-mismatch"
   | "malformed-lane-state"
   | "lane-run-ownership-unverified"
@@ -283,6 +284,8 @@ export interface ReconcileLaneRunStateInput {
     readonly verificationFacts?: readonly LaneRunObservedVerificationFact[];
   };
 }
+
+type LaneRunReconciliationSurfaces = ReconcileLaneRunStateInput["surfaces"];
 
 export interface LaneRunReconciliationMismatch {
   readonly kind: LaneRunReconciliationMismatchKind;
@@ -503,6 +506,13 @@ const laneRunStatuses = new Set<unknown>([
   "blocked",
   "completed",
   "failed",
+]);
+const laneRunOperatorVerificationStates = new Set<unknown>([
+  "not-started",
+  "running",
+  "blocked",
+  "succeeded",
+  "unknown",
 ]);
 const laneRunQueueStatuses = new Set<unknown>(["queued", "completed", "revoked", "superseded"]);
 const laneRunLockStatuses = new Set<unknown>(["active", "completed", "revoked", "superseded"]);
@@ -1154,6 +1164,16 @@ export async function reconcileLaneRunState(
     throw new Error("Lane run reconciliation input is malformed.");
   }
 
+  const surfacesResult = parseLaneRunReconciliationSurfaces(
+    (input as { readonly surfaces?: unknown }).surfaces,
+  );
+
+  if (!surfacesResult.ok) {
+    return createMalformedReconciliationInputResult(input, surfacesResult.nextOperatorAction);
+  }
+
+  const surfaces = surfacesResult.surfaces;
+
   let queueRecord: LaneRunQueueRecord | undefined;
   let existingLock: LaneRunLock | undefined;
   let laneRunId: string | undefined;
@@ -1341,7 +1361,7 @@ export async function reconcileLaneRunState(
     );
   }
 
-  if (isMissingExpectedSurface(input.surfaces.branch)) {
+  if (isMissingExpectedSurface(surfaces.branch)) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "missing-branch",
@@ -1352,12 +1372,12 @@ export async function reconcileLaneRunState(
         existingLock?.active === true
           ? "stop the active lane run, inspect evidence, then requeue explicitly if safe"
           : "clean up stale lane references before rediscovery or requeue",
-        input.surfaces.branch?.ref,
+        surfaces.branch?.ref,
       ),
     );
   }
 
-  if (isMissingExpectedSurface(input.surfaces.worktree)) {
+  if (isMissingExpectedSurface(surfaces.worktree)) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "missing-worktree",
@@ -1368,24 +1388,24 @@ export async function reconcileLaneRunState(
         existingLock?.active === true
           ? "stop the active lane run, inspect evidence, then recreate or requeue explicitly"
           : "remove stale worktree references or recreate the worktree before continuing",
-        input.surfaces.worktree?.ref,
+        surfaces.worktree?.ref,
       ),
     );
   }
 
-  if (isLaneRunJournalMissing(input.surfaces.journal, state)) {
+  if (isLaneRunJournalMissing(surfaces.journal, state)) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "missing-journal",
         "manual-review",
         "lane run journal entry is missing",
         "manually review preserved evidence before retrying, requeueing, or cleaning up the lane",
-        input.surfaces.journal?.ref,
+        surfaces.journal?.ref,
       ),
     );
   }
 
-  if (isMissingExpectedSurface(input.surfaces.prDraft)) {
+  if (isMissingExpectedSurface(surfaces.prDraft)) {
     const activeLock = existingLock?.active === true;
     mismatches.push(
       createLaneRunReconciliationMismatch(
@@ -1395,12 +1415,12 @@ export async function reconcileLaneRunState(
         activeLock
           ? "stop the active lane run, inspect evidence, then requeue explicitly if safe"
           : "requeue explicitly after confirming no draft PR exists for this lane",
-        input.surfaces.prDraft?.ref,
+        surfaces.prDraft?.ref,
       ),
     );
   }
 
-  if (hasConflictingVerificationFacts(input.surfaces.verificationFacts ?? [], state)) {
+  if (hasConflictingVerificationFacts(surfaces.verificationFacts ?? [], state)) {
     mismatches.push(
       createLaneRunReconciliationMismatch(
         "conflicting-verification-facts",
@@ -2021,8 +2041,18 @@ async function readTerminalQueueRecordLaneRunId(
   const laneRunId = record.metadata[`${prefix}LaneRunId`];
   const digest = record.metadata[`${prefix}LaneRunIdSha256`];
 
-  if (laneRunId !== undefined && !isTruncatedLaneRunIdMetadataValue(laneRunId)) {
-    return isLaneRunId(laneRunId) && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId) ? laneRunId : undefined;
+  if (laneRunId !== undefined && isLaneRunId(laneRunId)) {
+    const digestMatchesMetadata = digest === undefined || digest === createLaneRunIdDigest(laneRunId);
+
+    if (digestMatchesMetadata && isLaneRunIdMetadataMatch(record.metadata, prefix, laneRunId)) {
+      return laneRunId;
+    }
+
+    if (!isTruncatedLaneRunIdMetadataValue(laneRunId, digest)) {
+      return undefined;
+    }
+  } else if (laneRunId !== undefined) {
+    return undefined;
   }
 
   return digest === undefined ? undefined : await readLaneRunIdByDigest(stateRoot, digest);
@@ -2063,8 +2093,8 @@ async function readLaneRunIdByDigest(stateRoot: string, digest: string): Promise
   return undefined;
 }
 
-function isTruncatedLaneRunIdMetadataValue(value: string): boolean {
-  return value.length === 256 && value.endsWith("...");
+function isTruncatedLaneRunIdMetadataValue(value: string, digest: string | undefined): boolean {
+  return digest !== undefined && value.length === 256 && value.endsWith("...") && digest !== createLaneRunIdDigest(value);
 }
 
 function isLaneRunIdDigest(value: string): boolean {
@@ -2152,7 +2182,7 @@ async function readOptionalLaneRunState(
   try {
     return await readLaneRunState(stateRoot, laneRunId);
   } catch (error) {
-    if (isNodeError(error) && error.code === "ENOENT") {
+    if (isNodeError(error) && (error.code === "ENOENT" || error.code === "ENAMETOOLONG")) {
       return undefined;
     }
 
@@ -2910,6 +2940,91 @@ function createRequestedIssueNotFoundExplanation(stableWorkItemId: string): Lane
   };
 }
 
+function parseLaneRunReconciliationSurfaces(
+  value: unknown,
+):
+  | { readonly ok: true; readonly surfaces: LaneRunReconciliationSurfaces }
+  | { readonly ok: false; readonly nextOperatorAction: string } {
+  if (!isRecord(value)) {
+    return createMalformedReconciliationSurfacesParseResult("provide a valid reconciliation surfaces payload before retrying");
+  }
+
+  const branch = value.branch;
+  const worktree = value.worktree;
+  const journal = value.journal;
+  const prDraft = value.prDraft;
+  const verificationFacts = value.verificationFacts;
+
+  if (
+    (branch !== undefined && !isLaneRunObservedSurface(branch)) ||
+    (worktree !== undefined && !isLaneRunObservedSurface(worktree)) ||
+    (journal !== undefined && !isLaneRunObservedSurface(journal)) ||
+    (prDraft !== undefined && !isLaneRunObservedSurface(prDraft))
+  ) {
+    return createMalformedReconciliationSurfacesParseResult(
+      "provide reconciliation surface entries with boolean expected and exists fields before retrying",
+    );
+  }
+
+  if (
+    verificationFacts !== undefined &&
+    (!Array.isArray(verificationFacts) || !verificationFacts.every(isLaneRunObservedVerificationFact))
+  ) {
+    return createMalformedReconciliationSurfacesParseResult(
+      "provide verification facts with source and status fields before retrying",
+    );
+  }
+
+  return {
+    ok: true,
+    surfaces: {
+      ...(branch === undefined ? {} : { branch }),
+      ...(worktree === undefined ? {} : { worktree }),
+      ...(journal === undefined ? {} : { journal }),
+      ...(prDraft === undefined ? {} : { prDraft }),
+      ...(verificationFacts === undefined ? {} : { verificationFacts }),
+    },
+  };
+}
+
+function createMalformedReconciliationSurfacesParseResult(
+  nextOperatorAction: string,
+): { readonly ok: false; readonly nextOperatorAction: string } {
+  return { ok: false, nextOperatorAction };
+}
+
+function isLaneRunObservedSurface(value: unknown): value is LaneRunObservedSurface {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const expectedKeys = Object.hasOwn(value, "ref") ? ["expected", "exists", "ref"] : ["expected", "exists"];
+
+  return (
+    hasExactKeys(value, expectedKeys) &&
+    typeof value.expected === "boolean" &&
+    typeof value.exists === "boolean" &&
+    (!Object.hasOwn(value, "ref") || typeof value.ref === "string")
+  );
+}
+
+function isLaneRunObservedVerificationFact(value: unknown): value is LaneRunObservedVerificationFact {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  const expectedKeys = Object.hasOwn(value, "evidenceRef")
+    ? ["source", "status", "evidenceRef"]
+    : ["source", "status"];
+
+  return (
+    hasExactKeys(value, expectedKeys) &&
+    isNonEmptyString(value.source) &&
+    (laneRunStatuses.has(value.status) || laneRunOperatorVerificationStates.has(value.status)) &&
+    (!Object.hasOwn(value, "evidenceRef") || typeof value.evidenceRef === "string")
+  );
+}
+
 function isMissingExpectedSurface(surface: LaneRunObservedSurface | undefined): boolean {
   return surface?.expected === true && surface.exists === false;
 }
@@ -3088,6 +3203,37 @@ function createMalformedLaneRunReconciliationResult(
             active: context.existingLock.active,
             laneRunId: context.existingLock.laneRunId,
           },
+    startsAgentExecution: false,
+  };
+}
+
+function createMalformedReconciliationInputResult(
+  input: ReconcileLaneRunStateInput,
+  nextOperatorAction: string,
+): LaneRunReconciliationResult {
+  const mismatch = createLaneRunReconciliationMismatch(
+    "malformed-reconciliation-input",
+    "blocked",
+    "lane run reconciliation input is malformed",
+    nextOperatorAction,
+  );
+
+  return {
+    schemaVersion: "ensen.lane-run-reconciliation.v1",
+    state: "blocked",
+    category: "blocked",
+    stableWorkItemId: input.stableWorkItemId,
+    laneRunId: input.laneRunId,
+    observedAt: input.observedAt,
+    publicDiagnostics: {
+      stableWorkItemId: input.stableWorkItemId,
+      reason: mismatch.publicMessage,
+    },
+    nextOperatorAction: mismatch.nextOperatorAction,
+    mismatches: [mismatch],
+    evidence: {
+      bundleRefs: [],
+    },
     startsAgentExecution: false,
   };
 }
