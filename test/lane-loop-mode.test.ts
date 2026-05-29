@@ -152,6 +152,40 @@ test("plans continuous mode as repeated supervised selection without auto merge 
   });
 });
 
+test("blocks continuous mode for customer repository queue records", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-114",
+      workItemId: "issue-114",
+      source: "github-issue",
+      laneId: "customer-lane",
+      repositoryClassification: "customer-repository",
+      queuedAt,
+      metadata: {
+        issueNumber: "114",
+      },
+    });
+
+    const plan = await planLoopMode(stateRoot, {
+      mode: "continuous",
+      invokedBy: "operator",
+    });
+
+    assert.equal(plan.state, "blocked");
+    assert.equal(
+      plan.blockerReason,
+      "customer repository execution is not authorized for loop mode",
+    );
+    assert.equal(
+      plan.nextOperatorAction,
+      "select an owner-controlled dogfood lane run before starting loop mode",
+    );
+    assert.equal(plan.safetyGates.ownerControlledOnly, true);
+    assert.equal(plan.safetyGates.customerRepoExecution, false);
+    assert.equal(JSON.stringify(plan).includes(stateRoot), false);
+  });
+});
+
 test("blocks continuous mode when the selected queue item is already locked", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {

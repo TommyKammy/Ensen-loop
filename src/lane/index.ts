@@ -1221,6 +1221,17 @@ export async function planLoopMode(
     };
   }
 
+  const ownershipBlocker = await resolveLoopModeOwnershipBlocker(stateRoot, explanation);
+
+  if (ownershipBlocker !== undefined) {
+    return {
+      ...basePlan,
+      state: "blocked",
+      blockerReason: ownershipBlocker.blockerReason,
+      nextOperatorAction: ownershipBlocker.nextOperatorAction,
+    };
+  }
+
   return {
     ...basePlan,
     state: "ready",
@@ -3117,6 +3128,35 @@ function resolveLoopModeBlockerReason(
   }
 
   return undefined;
+}
+
+async function resolveLoopModeOwnershipBlocker(
+  stateRoot: string,
+  explanation: LaneRunOperatorExplanation,
+): Promise<
+  | {
+      readonly blockerReason: string;
+      readonly nextOperatorAction: string;
+    }
+  | undefined
+> {
+  if (explanation.stableWorkItemId === undefined) {
+    return {
+      blockerReason: "no selected issue",
+      nextOperatorAction: "select or enqueue an owner-controlled dogfood lane run before starting loop mode",
+    };
+  }
+
+  const queueRecord = await readLaneRunQueueRecord(stateRoot, explanation.stableWorkItemId);
+
+  if (queueRecord.repositoryClassification === "owner-controlled-dogfood") {
+    return undefined;
+  }
+
+  return {
+    blockerReason: "customer repository execution is not authorized for loop mode",
+    nextOperatorAction: "select an owner-controlled dogfood lane run before starting loop mode",
+  };
 }
 
 function publicSafeDiagnosticText(value: string | undefined): string | undefined {
