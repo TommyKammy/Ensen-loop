@@ -3046,6 +3046,10 @@ function validatePlanLoopModeInput(input: PlanLoopModeInput): void {
     throw new Error("One-shot loop mode requires a selected work item.");
   }
 
+  if (input.mode === "continuous" && input.stableWorkItemId !== undefined) {
+    throw new Error("Continuous loop mode does not accept a selected work item.");
+  }
+
   if (input.stableWorkItemId !== undefined) {
     assertSafeStableWorkItemId(input.stableWorkItemId);
   }
