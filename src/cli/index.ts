@@ -16,6 +16,7 @@ import type { LocalFakeExecutorOutcome } from "../executor/index.js";
 import {
   explainLaneRun,
   getLaneRunStatus,
+  planLoopMode,
   prepareLocalLaneWorkspace,
   requeueLaneRun,
   retryLaneRun,
@@ -298,6 +299,28 @@ async function main(): Promise<number> {
     return explanation.state === "ok" ? 0 : 1;
   }
 
+  if (command === "loop-mode") {
+    const options = parseLoopModeArgs(args);
+
+    if (options === undefined) {
+      console.error(
+        "Usage: ensen-loop loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>",
+      );
+      console.error("Usage: ensen-loop loop-mode continuous --state-root <state-root>");
+      console.error("X-Gate 4 dogfood is owner-controlled only and does not authorize customer repo execution.");
+      return 1;
+    }
+
+    const plan = await planLoopMode(options.stateRoot, {
+      mode: options.mode,
+      stableWorkItemId: options.stableWorkItemId,
+      invokedBy: "local-operator",
+    });
+
+    printJson(plan);
+    return plan.state === "ready" ? 0 : 1;
+  }
+
   if (command === "stop" || command === "retry" || command === "requeue") {
     const options = parseOperatorActionArgs(args);
 
@@ -351,6 +374,11 @@ async function main(): Promise<number> {
   );
   console.error("Usage: ensen-loop status --state-root <state-root>");
   console.error("Usage: ensen-loop explain --state-root <state-root> [--issue <stable-work-item-id>]");
+  console.error(
+    "Usage: ensen-loop loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>",
+  );
+  console.error("Usage: ensen-loop loop-mode continuous --state-root <state-root>");
+  console.error("X-Gate 4 dogfood is owner-controlled only and does not authorize customer repo execution.");
   console.error(
     "Usage: ensen-loop stop|retry|requeue --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>",
   );
@@ -504,6 +532,61 @@ function parseExplainArgs(args: readonly string[]): ExplainOptions | undefined {
   return {
     stateRoot: args[1],
     stableWorkItemId: args[3],
+  };
+}
+
+interface LoopModeOptions {
+  readonly mode: "one-shot" | "continuous";
+  readonly stateRoot: string;
+  readonly stableWorkItemId?: string;
+}
+
+function parseLoopModeArgs(args: readonly string[]): LoopModeOptions | undefined {
+  const [mode, ...optionArgs] = args;
+
+  if (mode !== "one-shot" && mode !== "continuous") {
+    return undefined;
+  }
+
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < optionArgs.length; index += 2) {
+    const flag = optionArgs[index];
+    const value = optionArgs[index + 1];
+
+    if (flag === undefined || value === undefined || !flag.startsWith("--")) {
+      return undefined;
+    }
+
+    values.set(flag, value);
+  }
+
+  const stateRoot = values.get("--state-root");
+  const stableWorkItemId = values.get("--issue");
+
+  if (stateRoot === undefined) {
+    return undefined;
+  }
+
+  if (mode === "one-shot") {
+    if (stableWorkItemId === undefined || values.size !== 2) {
+      return undefined;
+    }
+
+    return {
+      mode,
+      stateRoot,
+      stableWorkItemId,
+    };
+  }
+
+  if (stableWorkItemId !== undefined || values.size !== 1) {
+    return undefined;
+  }
+
+  return {
+    mode,
+    stateRoot,
   };
 }
 
