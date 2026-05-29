@@ -203,8 +203,54 @@ test("blocks continuous mode for customer repository queue records", async () =>
     );
     assert.equal(
       plan.nextOperatorAction,
-      "select an owner-controlled dogfood lane run before starting loop mode",
+      "remove or requeue customer repository lane runs before starting continuous loop mode",
     );
+    assert.equal(plan.safetyGates.ownerControlledOnly, true);
+    assert.equal(plan.safetyGates.customerRepoExecution, false);
+    assert.equal(JSON.stringify(plan).includes(stateRoot), false);
+  });
+});
+
+test("blocks continuous mode when any queued record is a customer repository", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-114",
+      workItemId: "issue-114",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "114",
+      },
+    });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-115",
+      workItemId: "issue-115",
+      source: "github-issue",
+      laneId: "customer-lane",
+      repositoryClassification: "customer-repository",
+      queuedAt: "2026-05-29T10:02:00.000Z",
+      metadata: {
+        issueNumber: "115",
+      },
+    });
+
+    const plan = await planLoopMode(stateRoot, {
+      mode: "continuous",
+      invokedBy: "operator",
+    });
+
+    assert.equal(plan.state, "blocked");
+    assert.equal(
+      plan.blockerReason,
+      "customer repository execution is not authorized for loop mode",
+    );
+    assert.equal(
+      plan.nextOperatorAction,
+      "remove or requeue customer repository lane runs before starting continuous loop mode",
+    );
+    assert.equal(plan.selectedIssue, "#114");
     assert.equal(plan.safetyGates.ownerControlledOnly, true);
     assert.equal(plan.safetyGates.customerRepoExecution, false);
     assert.equal(JSON.stringify(plan).includes(stateRoot), false);

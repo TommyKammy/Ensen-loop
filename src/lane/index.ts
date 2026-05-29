@@ -1221,7 +1221,7 @@ export async function planLoopMode(
     };
   }
 
-  const ownershipBlocker = await resolveLoopModeOwnershipBlocker(stateRoot, explanation);
+  const ownershipBlocker = await resolveLoopModeOwnershipBlocker(stateRoot, input.mode, explanation);
 
   if (ownershipBlocker !== undefined) {
     return {
@@ -3136,6 +3136,7 @@ function resolveLoopModeBlockerReason(
 
 async function resolveLoopModeOwnershipBlocker(
   stateRoot: string,
+  mode: LoopMode,
   explanation: LaneRunOperatorExplanation,
 ): Promise<
   | {
@@ -3149,6 +3150,19 @@ async function resolveLoopModeOwnershipBlocker(
       blockerReason: "no selected issue",
       nextOperatorAction: "select or enqueue an owner-controlled dogfood lane run before starting loop mode",
     };
+  }
+
+  if (mode === "continuous") {
+    const customerQueueRecord = (await readLaneRunQueueRecords(stateRoot)).find(
+      (record) => record.status === "queued" && record.repositoryClassification === "customer-repository",
+    );
+
+    if (customerQueueRecord !== undefined) {
+      return {
+        blockerReason: "customer repository execution is not authorized for loop mode",
+        nextOperatorAction: "remove or requeue customer repository lane runs before starting continuous loop mode",
+      };
+    }
   }
 
   const queueRecord = await readLaneRunQueueRecord(stateRoot, explanation.stableWorkItemId);
