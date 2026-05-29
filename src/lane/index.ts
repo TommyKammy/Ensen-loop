@@ -1228,21 +1228,21 @@ export async function planLoopMode(
     };
   }
 
-  const ownershipBlocker = await resolveLoopModeOwnershipBlocker(stateRoot, input.mode, explanation);
+  const ownershipDecision = await resolveLoopModeOwnershipDecision(stateRoot, input.mode, explanation);
 
-  if (ownershipBlocker !== undefined) {
+  if (ownershipDecision.state === "blocked") {
     return {
       ...basePlan,
       state: "blocked",
-      blockerReason: ownershipBlocker.blockerReason,
-      nextOperatorAction: ownershipBlocker.nextOperatorAction,
+      blockerReason: ownershipDecision.blockerReason,
+      nextOperatorAction: ownershipDecision.nextOperatorAction,
     };
   }
 
   return {
     ...basePlan,
     state: "ready",
-    nextOperatorAction: explanation.nextOperatorAction,
+    nextOperatorAction: ownershipDecision.nextOperatorAction,
   };
 }
 
@@ -3141,19 +3141,24 @@ function resolveLoopModeBlockerReason(
   return undefined;
 }
 
-async function resolveLoopModeOwnershipBlocker(
+async function resolveLoopModeOwnershipDecision(
   stateRoot: string,
   mode: LoopMode,
   explanation: LaneRunOperatorExplanation,
 ): Promise<
   | {
+      readonly state: "ready";
+      readonly nextOperatorAction: string;
+    }
+  | {
+      readonly state: "blocked";
       readonly blockerReason: string;
       readonly nextOperatorAction: string;
     }
-  | undefined
 > {
   if (explanation.stableWorkItemId === undefined) {
     return {
+      state: "blocked",
       blockerReason: "no selected issue",
       nextOperatorAction: "select or enqueue an owner-controlled dogfood lane run before starting loop mode",
     };
@@ -3166,6 +3171,7 @@ async function resolveLoopModeOwnershipBlocker(
 
     if (customerQueueRecord !== undefined) {
       return {
+        state: "blocked",
         blockerReason: "customer repository execution is not authorized for loop mode",
         nextOperatorAction: "remove or requeue customer repository lane runs before starting continuous loop mode",
       };
@@ -3175,10 +3181,14 @@ async function resolveLoopModeOwnershipBlocker(
   const queueRecord = await readLaneRunQueueRecord(stateRoot, explanation.stableWorkItemId);
 
   if (queueRecord.repositoryClassification === "owner-controlled-dogfood") {
-    return undefined;
+    return {
+      state: "ready",
+      nextOperatorAction: explanation.nextOperatorAction,
+    };
   }
 
   return {
+    state: "blocked",
     blockerReason: "customer repository execution is not authorized for loop mode",
     nextOperatorAction: "select an owner-controlled dogfood lane run before starting loop mode",
   };
