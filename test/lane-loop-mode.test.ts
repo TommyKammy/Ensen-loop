@@ -152,7 +152,7 @@ test("plans continuous mode as repeated supervised selection without auto merge 
   });
 });
 
-test("rejects continuous mode with an operator-selected issue", async () => {
+test("rejects continuous mode with an operator-selected issue in a multi-item queue", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
       stableWorkItemId: "github-issue-114",
@@ -165,11 +165,22 @@ test("rejects continuous mode with an operator-selected issue", async () => {
         issueNumber: "114",
       },
     });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-115",
+      workItemId: "issue-115",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-29T10:02:00.000Z",
+      metadata: {
+        issueNumber: "115",
+      },
+    });
 
     await assert.rejects(
       planLoopMode(stateRoot, {
         mode: "continuous",
-        stableWorkItemId: "github-issue-114",
+        stableWorkItemId: "github-issue-115",
         invokedBy: "operator",
       }),
       /Continuous loop mode does not accept a selected work item\./,

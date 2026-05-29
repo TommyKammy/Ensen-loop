@@ -1205,10 +1205,17 @@ export async function planLoopMode(
 ): Promise<LoopModePlan> {
   validatePlanLoopModeInput(input);
 
-  const explanation =
-    input.mode === "one-shot"
-      ? await explainLaneRun(stateRoot, { stableWorkItemId: input.stableWorkItemId })
-      : await explainLaneRun(stateRoot);
+  let explanation: LaneRunOperatorExplanation;
+
+  if (input.mode === "one-shot") {
+    explanation = await explainLaneRun(stateRoot, { stableWorkItemId: input.stableWorkItemId });
+  } else {
+    if (input.stableWorkItemId !== undefined) {
+      throw new Error("Continuous loop mode does not accept a selected work item.");
+    }
+
+    explanation = await explainLaneRun(stateRoot);
+  }
   const blockerReason = resolveLoopModeBlockerReason(explanation);
   const basePlan = createLoopModePlanBase(input.mode, explanation);
 
