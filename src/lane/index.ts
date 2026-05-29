@@ -204,6 +204,47 @@ export interface LaneRunOperatorExplanation {
   };
 }
 
+export type LoopMode = "one-shot" | "continuous";
+
+export interface PlanLoopModeInput {
+  readonly mode: LoopMode;
+  readonly stableWorkItemId?: string;
+  readonly invokedBy: string;
+}
+
+export interface LoopModePlan {
+  readonly schemaVersion: "ensen.loop-mode-plan.v1";
+  readonly mode: LoopMode;
+  readonly state: "ready" | "blocked";
+  readonly selectedIssue?: string;
+  readonly stableWorkItemId?: string;
+  readonly selection: {
+    readonly strategy: "operator-selected" | "supervised-repeated-selection";
+    readonly maxSelections: 1;
+    readonly repeats: boolean;
+  };
+  readonly safetyGates: {
+    readonly ownerControlledOnly: true;
+    readonly customerRepoExecution: false;
+    readonly regulatedDataHandling: false;
+    readonly automaticMerge: false;
+    readonly automaticQualityDecision: false;
+  };
+  readonly sharedBoundaries: readonly [
+    "queue",
+    "lock",
+    "status",
+    "explain",
+    "stop",
+    "retry",
+    "requeue",
+    "stale-state-reconciliation",
+  ];
+  readonly xGate4DogfoodBoundary?: "owner-controlled repos only; does not authorize customer repo execution";
+  readonly blockerReason?: string;
+  readonly nextOperatorAction: string;
+}
+
 export interface EnqueueLaneRunInput {
   readonly stableWorkItemId: string;
   readonly workItemId: WorkItem["id"];
@@ -1155,6 +1196,35 @@ export async function explainLaneRun(
     blockerReason: selected.blockerReason,
     nextOperatorAction: selected.nextOperatorAction,
     activeLock: selected.activeLock,
+  };
+}
+
+export async function planLoopMode(
+  stateRoot: string,
+  input: PlanLoopModeInput,
+): Promise<LoopModePlan> {
+  validatePlanLoopModeInput(input);
+
+  const explanation =
+    input.mode === "one-shot"
+      ? await explainLaneRun(stateRoot, { stableWorkItemId: input.stableWorkItemId })
+      : await explainLaneRun(stateRoot);
+  const blockerReason = resolveLoopModeBlockerReason(explanation);
+  const basePlan = createLoopModePlanBase(input.mode, explanation);
+
+  if (blockerReason !== undefined) {
+    return {
+      ...basePlan,
+      state: "blocked",
+      blockerReason,
+      nextOperatorAction: explanation.nextOperatorAction,
+    };
+  }
+
+  return {
+    ...basePlan,
+    state: "ready",
+    nextOperatorAction: explanation.nextOperatorAction,
   };
 }
 
@@ -2950,6 +3020,103 @@ function resolveBlockedOperatorStatusReason(item: LaneRunOperatorStatusItem): st
   }
 
   return "one or more lane runs are blocked";
+}
+
+function validatePlanLoopModeInput(input: PlanLoopModeInput): void {
+  if (input.mode !== "one-shot" && input.mode !== "continuous") {
+    throw new Error("Loop mode must be one-shot or continuous.");
+  }
+
+  if (!isNonEmptyString(input.invokedBy)) {
+    throw new Error("Loop mode requires an operator invocation context.");
+  }
+
+  if (input.mode === "one-shot" && input.stableWorkItemId === undefined) {
+    throw new Error("One-shot loop mode requires a selected work item.");
+  }
+
+  if (input.stableWorkItemId !== undefined) {
+    assertSafeStableWorkItemId(input.stableWorkItemId);
+  }
+}
+
+function createLoopModePlanBase(
+  mode: LoopMode,
+  explanation: LaneRunOperatorExplanation,
+): Omit<LoopModePlan, "state" | "blockerReason" | "nextOperatorAction"> {
+  const plan = {
+    schemaVersion: "ensen.loop-mode-plan.v1" as const,
+    mode,
+    selectedIssue: explanation.selectedIssue,
+    stableWorkItemId: explanation.stableWorkItemId,
+    selection:
+      mode === "one-shot"
+        ? {
+            strategy: "operator-selected" as const,
+            maxSelections: 1 as const,
+            repeats: false as const,
+          }
+        : {
+            strategy: "supervised-repeated-selection" as const,
+            maxSelections: 1 as const,
+            repeats: true as const,
+          },
+    safetyGates: createLoopModeSafetyGates(),
+    sharedBoundaries: createLoopModeSharedBoundaries(),
+    xGate4DogfoodBoundary:
+      mode === "continuous"
+        ? ("owner-controlled repos only; does not authorize customer repo execution" as const)
+        : undefined,
+  };
+
+  if (plan.xGate4DogfoodBoundary === undefined) {
+    const { xGate4DogfoodBoundary: _omitted, ...withoutXGate4 } = plan;
+
+    return withoutXGate4;
+  }
+
+  return plan;
+}
+
+function createLoopModeSafetyGates(): LoopModePlan["safetyGates"] {
+  return {
+    ownerControlledOnly: true,
+    customerRepoExecution: false,
+    regulatedDataHandling: false,
+    automaticMerge: false,
+    automaticQualityDecision: false,
+  };
+}
+
+function createLoopModeSharedBoundaries(): LoopModePlan["sharedBoundaries"] {
+  return [
+    "queue",
+    "lock",
+    "status",
+    "explain",
+    "stop",
+    "retry",
+    "requeue",
+    "stale-state-reconciliation",
+  ];
+}
+
+function resolveLoopModeBlockerReason(
+  explanation: LaneRunOperatorExplanation,
+): string | undefined {
+  if (explanation.state === "blocked") {
+    return explanation.blockerReason ?? "lane run is blocked";
+  }
+
+  if (explanation.laneState === "active") {
+    return "lane run is already active";
+  }
+
+  if (explanation.laneState !== "queued") {
+    return `lane run is not queued: ${explanation.laneState}`;
+  }
+
+  return undefined;
 }
 
 function publicSafeDiagnosticText(value: string | undefined): string | undefined {

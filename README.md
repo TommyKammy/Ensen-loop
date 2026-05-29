@@ -51,6 +51,8 @@ The Protocol dependency is evidence-only: Ensen-protocol v0.3.0, TommyKammy/Ense
 
 X-Gate 4 dogfood readiness still depends on the broader cross-repo checklist, including Flow Track A closure and the general roadmap update. Track B remains future work: customer repos, ERPNext live connector, regulated data, electronic signatures, batch release, final disposition, and compliance guarantees.
 
+Phase 6 loop mode planning is exposed through `loop-mode`. One-shot mode is a bounded operator-invoked run for one selected issue or lane work item. Continuous mode is supervised repeated selection over the same queue, lock, status, explain, stop, retry, requeue, and stale-state reconciliation boundaries. Continuous mode does not authorize automatic merge, automatic final quality decisions, customer repo execution, live customer pilots, regulated-data handling, or compliance claims. X-Gate 4 dogfood is owner-controlled only and does not authorize customer repo execution.
+
 ## Commands
 
 ```sh
@@ -64,6 +66,8 @@ node dist/src/cli/index.js run-request <run-request-json-file>
 node dist/src/cli/index.js run-request <run-request-json-file> --status-snapshot queued
 node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
 node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>
+node dist/src/cli/index.js loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>
+node dist/src/cli/index.js loop-mode continuous --state-root <state-root>
 ```
 
 `npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.2.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures. Those fixtures remain `eip.run-request.v1`, `eip.run-status.v1`, `eip.run-result.v1`, and `eip.evidence-bundle-ref.v1`.
@@ -77,6 +81,8 @@ node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-roo
 `x-gate2-smoke <run-request-json-file>` emits the X-Gate 2 narrow loop-flow dry-run smoke payload to stdout. The JSON payload always contains deterministic `statusSnapshot` and `runResult` fields when stable request and correlation identifiers are available. Plannable smoke requests also include an `evidenceBundleRef`; blocked dry-runs omit that field. The EvidenceBundleRef uses a relative local artifact URI under `artifacts/evidence/x-gate2/<request-id>.json`; the command describes that artifact location but does not create or write the artifact. The smoke path does not create a repository, branch, worktree, GitHub issue, pull request, Codex session, durable evidence bundle, or provider call. Invalid RunRequest input and unsupported EIP major versions fail closed with blocked status/result output when stable request and correlation identifiers are available.
 
 `x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>` runs the bounded Phase 3 local fake lane smoke path. It validates the RunRequest, prepares local lane workspace/state directories, invokes the deterministic local fake executor, persists LaneRunState plus local evidence metadata, and emits one aggregate JSON object with RunStatusSnapshot and RunResult projections. It does not create or mutate GitHub issues, branches, pull requests, reviews, commits, real agent-provider sessions, or production evidence archives. Invalid input, unsupported EIP major versions, unsafe roots, failed fake outcomes, and blocked fake outcomes fail closed with parseable JSON output.
+
+`loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>` emits a bounded plan for one operator-selected queued lane run. `loop-mode continuous --state-root <state-root>` emits a supervised repeated-selection plan for the next queued lane run. Both modes report public-safe diagnostics and next operator actions without leaking local paths or credentials. Continuous mode keeps `automaticMerge`, `automaticQualityDecision`, `customerRepoExecution`, and `regulatedDataHandling` false.
 
 EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.2.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
 
