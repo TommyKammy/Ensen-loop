@@ -30,7 +30,7 @@ const customerDomainPatterns: readonly RegExp[] = [
 ];
 
 const privateRepositoryDetailPatterns: readonly RegExp[] = [
-  /\b(?:https?:\/\/)?github\.com\/(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?-]+)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
+  /\b(?:https?:\/\/)?github\.com\/(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
   /\bgit@github\.com:(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\.git)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
 ];
 
