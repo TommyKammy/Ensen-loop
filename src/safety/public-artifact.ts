@@ -40,6 +40,8 @@ const privateRepositoryPathTail =
   "(?:/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
 const privateRepositoryReferenceTail =
   "(?:\\.git)?(?:[/?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
+const privateRepositoryBareSlugReferenceTail =
+  "(?:(?:\\.git)|(?:/(?:actions|blob|branches|commit|compare|issues|packages|projects|pulls?|releases|security|settings|tags|tree|wiki)\\b[A-Za-z0-9._~:@!$&()*+,;=%/?#-]*)|(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+))";
 const publicDiagnosticBoundary = "(?=$|[\\s\"'`<>)\\]}?,.;:/#])";
 
 const privateRepositoryDetailPatterns: readonly RegExp[] = [
@@ -56,7 +58,7 @@ const privateRepositoryDetailPatterns: readonly RegExp[] = [
     "gi",
   ),
   new RegExp(
-    `\\b${privateRepositoryBareSlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    `\\b${privateRepositoryBareSlug}${privateRepositoryBareSlugReferenceTail}${publicDiagnosticBoundary}`,
     "gi",
   ),
 ];
