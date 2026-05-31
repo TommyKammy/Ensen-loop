@@ -351,18 +351,148 @@ test("CLI loop-mode emits public-safe diagnostics and X-Gate 4 owner-only wordin
 
     const result = await execCli(["loop-mode", "continuous", "--state-root", stateRoot]);
     const plan = JSON.parse(result.stdout) as {
+      readonly mode?: unknown;
       readonly state?: unknown;
+      readonly selectedIssue?: unknown;
+      readonly stableWorkItemId?: unknown;
+      readonly selection?: unknown;
+      readonly safetyGates?: {
+        readonly automaticMerge?: unknown;
+        readonly automaticQualityDecision?: unknown;
+        readonly customerRepoExecution?: unknown;
+        readonly regulatedDataHandling?: unknown;
+      };
+      readonly sharedBoundaries?: unknown;
+      readonly nextOperatorAction?: unknown;
       readonly xGate4DogfoodBoundary?: unknown;
     };
+    const serializedPlan = JSON.stringify(plan);
 
     assert.equal(result.stderr, "");
     assert.equal(result.exitCode, 0);
+    assert.equal(plan.mode, "continuous");
     assert.equal(plan.state, "ready");
+    assert.equal(plan.selectedIssue, "#114");
+    assert.equal(plan.stableWorkItemId, "github-issue-114");
+    assert.deepEqual(plan.selection, {
+      strategy: "supervised-repeated-selection",
+      maxSelections: 1,
+      repeats: true,
+    });
+    assert.equal(plan.safetyGates?.automaticMerge, false);
+    assert.equal(plan.safetyGates?.automaticQualityDecision, false);
+    assert.equal(plan.safetyGates?.customerRepoExecution, false);
+    assert.equal(plan.safetyGates?.regulatedDataHandling, false);
+    assert.deepEqual(plan.sharedBoundaries, [
+      "queue",
+      "lock",
+      "status",
+      "explain",
+      "stop",
+      "retry",
+      "requeue",
+      "stale-state-reconciliation",
+    ]);
+    assert.equal(plan.nextOperatorAction, "claim queued lane run when ready");
     assert.equal(
       plan.xGate4DogfoodBoundary,
       "owner-controlled repos only; does not authorize customer repo execution",
     );
-    assert.equal(JSON.stringify(plan).includes(stateRoot), false);
+    assert.equal(serializedPlan.includes(stateRoot), false);
+    assert.equal(serializedPlan.includes(os.homedir()), false);
+  });
+});
+
+test("CLI continuous loop-mode rejects an operator-selected issue argument", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-114",
+      workItemId: "issue-114",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "114",
+      },
+    });
+
+    const result = await execCli([
+      "loop-mode",
+      "continuous",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-114",
+    ]);
+
+    assert.equal(result.stdout, "");
+    assert.equal(result.exitCode, 1);
+    assert.match(result.stderr, /Usage: ensen-loop loop-mode continuous --state-root <state-root>/);
+    assert.match(result.stderr, /does not authorize customer repo execution/);
+    assert.equal(result.stderr.includes(stateRoot), false);
+    assert.equal(result.stderr.includes(os.homedir()), false);
+  });
+});
+
+test("CLI continuous loop-mode keeps blocked queue records operator-guided", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-124",
+      workItemId: "issue-124",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        blockerReason: "waiting for operator review token=ghp_sampleSecretValue",
+        issueNumber: "124",
+      },
+    });
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-125",
+      workItemId: "issue-125",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt: "2026-05-29T10:02:00.000Z",
+      metadata: {
+        issueNumber: "125",
+      },
+    });
+
+    const result = await execCli(["loop-mode", "continuous", "--state-root", stateRoot]);
+    const plan = JSON.parse(result.stdout) as {
+      readonly mode?: unknown;
+      readonly state?: unknown;
+      readonly selectedIssue?: unknown;
+      readonly stableWorkItemId?: unknown;
+      readonly blockerReason?: unknown;
+      readonly nextOperatorAction?: unknown;
+      readonly safetyGates?: {
+        readonly automaticMerge?: unknown;
+        readonly automaticQualityDecision?: unknown;
+        readonly customerRepoExecution?: unknown;
+        readonly regulatedDataHandling?: unknown;
+      };
+    };
+    const serializedPlan = JSON.stringify(plan);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 1);
+    assert.equal(plan.mode, "continuous");
+    assert.equal(plan.state, "blocked");
+    assert.equal(plan.selectedIssue, "#124");
+    assert.equal(plan.stableWorkItemId, "github-issue-124");
+    assert.equal(plan.blockerReason, "waiting for operator review <redacted>");
+    assert.equal(plan.nextOperatorAction, "resolve blocker before claiming or running the lane");
+    assert.equal(plan.safetyGates?.automaticMerge, false);
+    assert.equal(plan.safetyGates?.automaticQualityDecision, false);
+    assert.equal(plan.safetyGates?.customerRepoExecution, false);
+    assert.equal(plan.safetyGates?.regulatedDataHandling, false);
+    assert.equal(serializedPlan.includes(stateRoot), false);
+    assert.equal(serializedPlan.includes(os.homedir()), false);
+    assert.equal(serializedPlan.includes("ghp_sampleSecretValue"), false);
   });
 });
 
