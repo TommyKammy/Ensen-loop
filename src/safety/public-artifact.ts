@@ -2,6 +2,7 @@ const secretLikePlaceholder = "<secret-like-value>";
 const customerIdentifierPlaceholder = "<customer-identifier>";
 const customerPathPlaceholder = "<customer-path>";
 const customerDomainPlaceholder = "<customer-domain>";
+const privateRepositoryPlaceholder = "<private-repository>";
 const regulatedRecordLikePlaceholder = "<regulated-record-like-value>";
 
 const secretLikePatterns: readonly RegExp[] = [
@@ -28,6 +29,40 @@ const customerDomainPatterns: readonly RegExp[] = [
   /\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:customer|tenant|private|internal)\.example\b/gi,
 ];
 
+const privateRepositoryNameSegment =
+  "[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*";
+const repositoryNameSegment = "[A-Za-z0-9_.-]+";
+const privateRepositorySlug =
+  `(?:(?:${privateRepositoryNameSegment}/${repositoryNameSegment})` +
+  `|(?:${repositoryNameSegment}/${privateRepositoryNameSegment}))`;
+const privateRepositoryBareSlug = `(?!customers?\\/|tenants?\\/|accounts?\\/)${privateRepositorySlug}`;
+const privateRepositoryPathTail =
+  "(?:/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
+const privateRepositoryReferenceTail =
+  "(?:\\.git)?(?:[/?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
+const privateRepositoryBareSlugReferenceTail =
+  "(?:(?:\\.git)|(?:/(?:actions|blob|branches|commit|compare|issues|packages|projects|pulls?|releases|security|settings|tags|tree|wiki)\\b[A-Za-z0-9._~:@!$&()*+,;=%/?#-]*)|(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+))";
+const publicDiagnosticBoundary = "(?=$|[\\s\"'`<>)\\]}?,.;:/#])";
+
+const privateRepositoryDetailPatterns: readonly RegExp[] = [
+  new RegExp(
+    `\\b(?:https?:\\/\\/)?github\\.com\\/${privateRepositorySlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b(?:https?:\\/\\/)?api\\.github\\.com\\/repos\\/${privateRepositorySlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\bgit@github\\.com:${privateRepositorySlug}${privateRepositoryReferenceTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b${privateRepositoryBareSlug}${privateRepositoryBareSlugReferenceTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+];
+
 const regulatedRecordLikePatterns: readonly RegExp[] = [
   /\bMRN[-_:# ]*\d{6,}\b(?:\s+DOB\s+\d{4}-\d{2}-\d{2})?/gi,
   /\bDOB\s+\d{4}-\d{2}-\d{2}\b/gi,
@@ -43,6 +78,7 @@ export function containsUnsafePublicArtifactText(value: string): boolean {
     containsPattern(value, customerIdentifierPatterns) ||
     containsPattern(value, customerPathPatterns) ||
     containsPattern(value, customerDomainPatterns) ||
+    containsPattern(value, privateRepositoryDetailPatterns) ||
     containsPattern(value, regulatedRecordLikePatterns) ||
     workstationLocalPathPattern.test(value)
   );
@@ -51,6 +87,7 @@ export function containsUnsafePublicArtifactText(value: string): boolean {
 export function sanitizePublicDiagnosticMessage(message: string): string {
   let sanitized = replacePatterns(message, secretLikePatterns, secretLikePlaceholder);
   sanitized = replacePatterns(sanitized, customerIdentifierPatterns, customerIdentifierPlaceholder);
+  sanitized = replacePatterns(sanitized, privateRepositoryDetailPatterns, privateRepositoryPlaceholder);
   sanitized = replacePatterns(sanitized, customerPathPatterns, customerPathPlaceholder);
   sanitized = replacePatterns(sanitized, customerDomainPatterns, customerDomainPlaceholder);
   sanitized = replacePatterns(

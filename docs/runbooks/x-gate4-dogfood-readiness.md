@@ -74,9 +74,35 @@ Before a dogfood smoke run, verify all items below:
 Focused command examples:
 
 ```sh
+node dist/src/cli/index.js status --state-root <state-root>
+node dist/src/cli/index.js explain --state-root <state-root> --issue <stable-work-item-id>
 node dist/src/cli/index.js loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>
 node dist/src/cli/index.js loop-mode continuous --state-root <state-root>
 ```
+
+## LOOP-X4-004 Status And Explain Evidence
+
+The status and explain readiness evidence is the focused
+`lane-run-status-explain` test suite plus the CLI command examples above. It
+covers no selected issue, queued, active, blocked, completed, revoked,
+superseded, stale queue projection, and malformed state. The expected operator
+surface is:
+
+| Readiness state | Operator surface |
+| --- | --- |
+| No selected issue | Blocked with an explicit select-or-enqueue next action. |
+| Queued | OK with `claim queued lane run when ready`. |
+| Active | OK with the active lock id and wait guidance. |
+| Blocked | Blocked with a public-safe blocker reason and repair guidance. |
+| Completed | OK with succeeded verification and no action required. |
+| Revoked | Blocked with revocation inspection guidance. |
+| Superseded | Blocked with fresh enqueue guidance if the issue is still selected. |
+| Stale queue projection | Terminal lock state wins over stale queued display text. |
+| Malformed state | Blocked with a repair-or-remove next action. |
+
+Public diagnostics must redact credentials, workstation-local paths, customer
+identifiers, private repository details, and regulated-looking values before
+they reach status or explain output.
 
 ## Stop Criteria
 
