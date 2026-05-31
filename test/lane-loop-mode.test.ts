@@ -365,3 +365,130 @@ test("CLI loop-mode emits public-safe diagnostics and X-Gate 4 owner-only wordin
     assert.equal(JSON.stringify(plan).includes(stateRoot), false);
   });
 });
+
+test("CLI one-shot loop-mode dogfood smoke emits a bounded ready plan for the selected issue", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-123",
+      workItemId: "issue-123",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "123",
+      },
+    });
+
+    const result = await execCli([
+      "loop-mode",
+      "one-shot",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-123",
+    ]);
+    const plan = JSON.parse(result.stdout) as {
+      readonly mode?: unknown;
+      readonly state?: unknown;
+      readonly selectedIssue?: unknown;
+      readonly stableWorkItemId?: unknown;
+      readonly selection?: unknown;
+      readonly safetyGates?: {
+        readonly automaticMerge?: unknown;
+        readonly automaticQualityDecision?: unknown;
+        readonly customerRepoExecution?: unknown;
+        readonly regulatedDataHandling?: unknown;
+      };
+      readonly sharedBoundaries?: unknown;
+      readonly nextOperatorAction?: unknown;
+    };
+    const serializedPlan = JSON.stringify(plan);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 0);
+    assert.equal(plan.mode, "one-shot");
+    assert.equal(plan.state, "ready");
+    assert.equal(plan.selectedIssue, "#123");
+    assert.equal(plan.stableWorkItemId, "github-issue-123");
+    assert.deepEqual(plan.selection, {
+      strategy: "operator-selected",
+      maxSelections: 1,
+      repeats: false,
+    });
+    assert.equal(plan.safetyGates?.automaticMerge, false);
+    assert.equal(plan.safetyGates?.automaticQualityDecision, false);
+    assert.equal(plan.safetyGates?.customerRepoExecution, false);
+    assert.equal(plan.safetyGates?.regulatedDataHandling, false);
+    assert.deepEqual(plan.sharedBoundaries, [
+      "queue",
+      "lock",
+      "status",
+      "explain",
+      "stop",
+      "retry",
+      "requeue",
+      "stale-state-reconciliation",
+    ]);
+    assert.equal(plan.nextOperatorAction, "claim queued lane run when ready");
+    assert.equal(serializedPlan.includes(stateRoot), false);
+    assert.equal(serializedPlan.includes(os.homedir()), false);
+    assert.equal(serializedPlan.includes("ghp_"), false);
+  });
+});
+
+test("CLI one-shot loop-mode smoke fails closed when the selected issue already has an active lock", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-123",
+      workItemId: "issue-123",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "123",
+      },
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-123",
+      laneRunId: "lane-run-123-a",
+      claimedBy: "operator-token=ghp_sampleSecretValue",
+      claimedAt,
+    });
+
+    const result = await execCli([
+      "loop-mode",
+      "one-shot",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-123",
+    ]);
+    const plan = JSON.parse(result.stdout) as {
+      readonly state?: unknown;
+      readonly blockerReason?: unknown;
+      readonly nextOperatorAction?: unknown;
+      readonly safetyGates?: {
+        readonly automaticMerge?: unknown;
+        readonly automaticQualityDecision?: unknown;
+        readonly customerRepoExecution?: unknown;
+        readonly regulatedDataHandling?: unknown;
+      };
+    };
+    const serializedPlan = JSON.stringify(plan);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 1);
+    assert.equal(plan.state, "blocked");
+    assert.equal(plan.blockerReason, "lane run is already active");
+    assert.equal(plan.nextOperatorAction, "wait for active lane run lane-run-123-a to finish");
+    assert.equal(plan.safetyGates?.automaticMerge, false);
+    assert.equal(plan.safetyGates?.automaticQualityDecision, false);
+    assert.equal(plan.safetyGates?.customerRepoExecution, false);
+    assert.equal(plan.safetyGates?.regulatedDataHandling, false);
+    assert.equal(serializedPlan.includes(stateRoot), false);
+    assert.equal(serializedPlan.includes(os.homedir()), false);
+    assert.equal(serializedPlan.includes("ghp_sampleSecretValue"), false);
+  });
+});
