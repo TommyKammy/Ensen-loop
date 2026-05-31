@@ -200,7 +200,7 @@ test("status and explain redact private repository details from blocker diagnost
       queuedAt,
       metadata: {
         issueNumber: "111",
-        blockerReason: "review evidence from github.com/acme/private-customer-repo is unavailable",
+        blockerReason: "review evidence from github.com/customer-alpha/public-evidence is unavailable",
       },
     });
 
@@ -219,7 +219,8 @@ test("status and explain redact private repository details from blocker diagnost
       explanation.blockerReason,
       "review evidence from <private-repository> is unavailable",
     );
-    assert.equal(serialized.includes("github.com/acme/private-customer-repo"), false);
+    assert.equal(serialized.includes("github.com/customer-alpha/public-evidence"), false);
+    assert.equal(serialized.includes("customer-alpha"), false);
   });
 });
 
