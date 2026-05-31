@@ -189,6 +189,40 @@ test("explain identifies blocked active lane run and safe next action", async ()
   });
 });
 
+test("status and explain redact private repository details from blocker diagnostics", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+      workItemId: "issue-111",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        issueNumber: "111",
+        blockerReason: "review evidence from github.com/acme/private-customer-repo is unavailable",
+      },
+    });
+
+    const status = await getLaneRunStatus(stateRoot);
+    const explanation = await explainLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-111",
+    });
+    const serialized = JSON.stringify({ status, explanation });
+
+    assert.equal(status.state, "blocked");
+    assert.equal(
+      status.blockerReason,
+      "review evidence from <private-repository> is unavailable",
+    );
+    assert.equal(
+      explanation.blockerReason,
+      "review evidence from <private-repository> is unavailable",
+    );
+    assert.equal(serialized.includes("github.com/acme/private-customer-repo"), false);
+  });
+});
+
 test("CLI status exits blocked for queued blocker diagnostics", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {

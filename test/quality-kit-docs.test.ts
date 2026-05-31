@@ -299,6 +299,11 @@ test("documents the X-Gate 4 owner-controlled dogfood readiness checklist", asyn
     "one-shot",
     "continuous loop mode",
     "does not rely on Ensen-flow runtime state",
+    "LOOP-X4-004 Status And Explain Evidence",
+    "node dist/src/cli/index.js status --state-root <state-root>",
+    "node dist/src/cli/index.js explain --state-root <state-root> --issue <stable-work-item-id>",
+    "stale queue projection",
+    "private repository details",
   ]) {
     assert.match(checklist, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
   }

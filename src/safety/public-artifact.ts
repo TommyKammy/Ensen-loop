@@ -2,6 +2,7 @@ const secretLikePlaceholder = "<secret-like-value>";
 const customerIdentifierPlaceholder = "<customer-identifier>";
 const customerPathPlaceholder = "<customer-path>";
 const customerDomainPlaceholder = "<customer-domain>";
+const privateRepositoryPlaceholder = "<private-repository>";
 const regulatedRecordLikePlaceholder = "<regulated-record-like-value>";
 
 const secretLikePatterns: readonly RegExp[] = [
@@ -28,6 +29,11 @@ const customerDomainPatterns: readonly RegExp[] = [
   /\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:customer|tenant|private|internal)\.example\b/gi,
 ];
 
+const privateRepositoryDetailPatterns: readonly RegExp[] = [
+  /\b(?:https?:\/\/)?github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
+  /\bgit@github\.com:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*(?:\.git)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
+];
+
 const regulatedRecordLikePatterns: readonly RegExp[] = [
   /\bMRN[-_:# ]*\d{6,}\b(?:\s+DOB\s+\d{4}-\d{2}-\d{2})?/gi,
   /\bDOB\s+\d{4}-\d{2}-\d{2}\b/gi,
@@ -43,6 +49,7 @@ export function containsUnsafePublicArtifactText(value: string): boolean {
     containsPattern(value, customerIdentifierPatterns) ||
     containsPattern(value, customerPathPatterns) ||
     containsPattern(value, customerDomainPatterns) ||
+    containsPattern(value, privateRepositoryDetailPatterns) ||
     containsPattern(value, regulatedRecordLikePatterns) ||
     workstationLocalPathPattern.test(value)
   );
@@ -53,6 +60,7 @@ export function sanitizePublicDiagnosticMessage(message: string): string {
   sanitized = replacePatterns(sanitized, customerIdentifierPatterns, customerIdentifierPlaceholder);
   sanitized = replacePatterns(sanitized, customerPathPatterns, customerPathPlaceholder);
   sanitized = replacePatterns(sanitized, customerDomainPatterns, customerDomainPlaceholder);
+  sanitized = replacePatterns(sanitized, privateRepositoryDetailPatterns, privateRepositoryPlaceholder);
   sanitized = replacePatterns(
     sanitized,
     regulatedRecordLikePatterns,
