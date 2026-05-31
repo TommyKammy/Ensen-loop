@@ -261,3 +261,53 @@ test("documents Loop X-Gate 3 Track A closure evidence", async () => {
     /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
   );
 });
+
+test("documents the X-Gate 4 owner-controlled dogfood readiness checklist", async () => {
+  const checklist = await readMarkdown("docs/runbooks/x-gate4-dogfood-readiness.md");
+  const readme = await readMarkdown("README.md");
+
+  for (const phrase of [
+    "X-Gate 4 Dogfood Readiness Checklist",
+    "owner-controlled",
+    "TommyKammy/Ensen-loop",
+    "codex/issue-122",
+    "public-safe",
+    "customer repositories",
+    "regulated data",
+    "production evidence claims",
+    "automatic merge",
+    "automatic quality decision",
+    "unsafe diagnostics",
+    "ambiguous state",
+    "unexpected mutation",
+    "Phase 6 completion baseline",
+    "#109",
+    "#110",
+    "#111",
+    "#112",
+    "#113",
+    "#114",
+    "1b28d6e",
+    "queue",
+    "lock",
+    "status",
+    "explain",
+    "stop",
+    "retry",
+    "requeue",
+    "stale-state reconciliation",
+    "one-shot",
+    "continuous loop mode",
+    "does not rely on Ensen-flow runtime state",
+  ]) {
+    assert.match(checklist, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  assert.match(readme, /docs\/runbooks\/x-gate4-dogfood-readiness\.md/);
+  assert.match(checklist, /node dist\/src\/cli\/index\.js loop-mode one-shot/);
+  assert.match(checklist, /node dist\/src\/cli\/index\.js loop-mode continuous/);
+  assert.doesNotMatch(
+    checklist,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});

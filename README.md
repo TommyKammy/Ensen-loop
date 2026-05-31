@@ -16,6 +16,8 @@ The X-Gate 3 Track B customer repository allowlist policy boundary is defined in
 
 The X-Gate 3 local fake lane smoke command is documented in [docs/runbooks/x-gate3-local-lane-smoke.md](docs/runbooks/x-gate3-local-lane-smoke.md).
 
+The X-Gate 4 owner-controlled dogfood readiness checklist is documented in [docs/runbooks/x-gate4-dogfood-readiness.md](docs/runbooks/x-gate4-dogfood-readiness.md). It defines the public-safe owner-only scope, Phase 6 baseline, and stop criteria for later dogfood child issues without relying on Ensen-flow runtime state.
+
 The Ensen-loop mission and development charter alignment are summarized in [docs/mission.md](docs/mission.md).
 
 The Phase 1 local Work Item validation skeleton is documented in [docs/reference/work-item-contract.md](docs/reference/work-item-contract.md).
@@ -49,7 +51,7 @@ The completed Loop issue set is:
 
 The Protocol dependency is evidence-only: Ensen-protocol v0.3.0, TommyKammy/Ensen-protocol#50, TommyKammy/Ensen-protocol#51, merge commit `c33277e5a470883493f10f2c6951a0ca0d5818b0`. The copied snapshot under `protocol-snapshots/ensen-protocol/v0.3.0` is repo-owned guidance and fixture-like data used by local conformance evidence; Ensen-loop remains buildable, testable, and operable without an Ensen-protocol checkout, service, package, fixture path, or runtime dependency. This closure records no Ensen-protocol runtime dependency.
 
-X-Gate 4 dogfood readiness still depends on the broader cross-repo checklist, including Flow Track A closure and the general roadmap update. Track B remains future work: customer repos, ERPNext live connector, regulated data, electronic signatures, batch release, final disposition, and compliance guarantees.
+X-Gate 4 dogfood readiness is bounded by the repo-local owner-controlled checklist in [docs/runbooks/x-gate4-dogfood-readiness.md](docs/runbooks/x-gate4-dogfood-readiness.md), alongside the broader X-Gate readiness inputs such as Flow Track A closure. Track B remains future work: customer repos, ERPNext live connector, regulated data, electronic signatures, batch release, final disposition, and compliance guarantees.
 
 Phase 6 loop mode planning is exposed through `loop-mode`. One-shot mode is a bounded operator-invoked run for one selected issue or lane work item. Continuous mode is supervised repeated selection over the same queue, lock, status, explain, stop, retry, requeue, and stale-state reconciliation boundaries. Continuous mode does not authorize automatic merge, automatic final quality decisions, customer repo execution, live customer pilots, regulated-data handling, or compliance claims. X-Gate 4 dogfood is owner-controlled only and does not authorize customer repo execution.
 
