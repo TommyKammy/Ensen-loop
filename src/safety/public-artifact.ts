@@ -29,9 +29,36 @@ const customerDomainPatterns: readonly RegExp[] = [
   /\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.(?:customer|tenant|private|internal)\.example\b/gi,
 ];
 
+const privateRepositoryNameSegment =
+  "[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*";
+const repositoryNameSegment = "[A-Za-z0-9_.-]+";
+const privateRepositorySlug =
+  `(?:(?:${privateRepositoryNameSegment}/${repositoryNameSegment})` +
+  `|(?:${repositoryNameSegment}/${privateRepositoryNameSegment}))`;
+const privateRepositoryBareSlug = `(?!customers?\\/|tenants?\\/|accounts?\\/)${privateRepositorySlug}`;
+const privateRepositoryPathTail =
+  "(?:/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
+const privateRepositoryReferenceTail =
+  "(?:\\.git)?(?:[/?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?";
+const publicDiagnosticBoundary = "(?=$|[\\s\"'`<>)\\]}?,.;:/#])";
+
 const privateRepositoryDetailPatterns: readonly RegExp[] = [
-  /\b(?:https?:\/\/)?github\.com\/(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?#-]+)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
-  /\bgit@github\.com:(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\.git)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
+  new RegExp(
+    `\\b(?:https?:\\/\\/)?github\\.com\\/${privateRepositorySlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b(?:https?:\\/\\/)?api\\.github\\.com\\/repos\\/${privateRepositorySlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\bgit@github\\.com:${privateRepositorySlug}${privateRepositoryReferenceTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
+  new RegExp(
+    `\\b${privateRepositoryBareSlug}${privateRepositoryPathTail}${publicDiagnosticBoundary}`,
+    "gi",
+  ),
 ];
 
 const regulatedRecordLikePatterns: readonly RegExp[] = [

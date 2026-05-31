@@ -298,6 +298,66 @@ test("status and explain redact private repository query and fragment tails", as
   });
 });
 
+test("status and explain redact private repository references across GitHub forms", async () => {
+  const examples = [
+    {
+      blockerReason:
+        "review evidence from git@github.com:acme/private-repo.git#customer-alpha is unavailable",
+      unsafeFragments: ["git@github.com:acme/private-repo.git", "customer-alpha"],
+    },
+    {
+      blockerReason:
+        "review evidence from https://api.github.com/repos/acme/private-repo/contents/customer-alpha/secrets.md is unavailable",
+      unsafeFragments: [
+        "api.github.com/repos/acme/private-repo",
+        "customer-alpha",
+        "secrets.md",
+      ],
+    },
+    {
+      blockerReason:
+        "review evidence from acme/private-repo/blob/customer-alpha/secrets.md is unavailable",
+      unsafeFragments: ["acme/private-repo", "customer-alpha", "secrets.md"],
+    },
+  ];
+
+  for (const example of examples) {
+    await withStateRoot(async (stateRoot) => {
+      await enqueueLaneRun(stateRoot, {
+        stableWorkItemId: "github-issue-111",
+        workItemId: "issue-111",
+        source: "github-issue",
+        laneId: "owner-dogfood",
+        repositoryClassification: "owner-controlled-dogfood",
+        queuedAt,
+        metadata: {
+          issueNumber: "111",
+          blockerReason: example.blockerReason,
+        },
+      });
+
+      const status = await getLaneRunStatus(stateRoot);
+      const explanation = await explainLaneRun(stateRoot, {
+        stableWorkItemId: "github-issue-111",
+      });
+      const serialized = JSON.stringify({ status, explanation });
+
+      assert.equal(status.state, "blocked");
+      assert.equal(
+        status.blockerReason,
+        "review evidence from <private-repository> is unavailable",
+      );
+      assert.equal(
+        explanation.blockerReason,
+        "review evidence from <private-repository> is unavailable",
+      );
+      for (const unsafeFragment of example.unsafeFragments) {
+        assert.equal(serialized.includes(unsafeFragment), false);
+      }
+    });
+  }
+});
+
 test("CLI status exits blocked for queued blocker diagnostics", async () => {
   await withStateRoot(async (stateRoot) => {
     await enqueueLaneRun(stateRoot, {
