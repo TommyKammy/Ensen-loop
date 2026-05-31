@@ -30,7 +30,7 @@ const customerDomainPatterns: readonly RegExp[] = [
 ];
 
 const privateRepositoryDetailPatterns: readonly RegExp[] = [
-  /\b(?:https?:\/\/)?github\.com\/(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
+  /\b(?:https?:\/\/)?github\.com\/(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\/[A-Za-z0-9._~:@!$&()*+,;=%-]+)*(?:[?#][A-Za-z0-9._~:@!$&()*+,;=%/?-]+)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
   /\bgit@github\.com:(?:(?:[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*\/[A-Za-z0-9_.-]+)|(?:[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]*(?:private|customer|tenant|confidential|internal)[A-Za-z0-9_.-]*))(?:\.git)?(?=$|[\s"'`<>)\]}?,.;:/#])/gi,
 ];
 
@@ -58,9 +58,9 @@ export function containsUnsafePublicArtifactText(value: string): boolean {
 export function sanitizePublicDiagnosticMessage(message: string): string {
   let sanitized = replacePatterns(message, secretLikePatterns, secretLikePlaceholder);
   sanitized = replacePatterns(sanitized, customerIdentifierPatterns, customerIdentifierPlaceholder);
+  sanitized = replacePatterns(sanitized, privateRepositoryDetailPatterns, privateRepositoryPlaceholder);
   sanitized = replacePatterns(sanitized, customerPathPatterns, customerPathPlaceholder);
   sanitized = replacePatterns(sanitized, customerDomainPatterns, customerDomainPlaceholder);
-  sanitized = replacePatterns(sanitized, privateRepositoryDetailPatterns, privateRepositoryPlaceholder);
   sanitized = replacePatterns(
     sanitized,
     regulatedRecordLikePatterns,
