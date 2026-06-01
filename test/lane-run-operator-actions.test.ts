@@ -1092,3 +1092,74 @@ test("CLI retry does not print queued metadata values", async () => {
     assert.equal(serializedOutput.includes("privateOperatorNote"), false);
   });
 });
+
+test("CLI stop and requeue smoke preserves lineage without printing durable metadata", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await enqueueLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      workItemId: "issue-112",
+      source: "github-issue",
+      laneId: "owner-dogfood",
+      repositoryClassification: "owner-controlled-dogfood",
+      queuedAt,
+      metadata: {
+        privateOperatorNote: "token=ghp_sampleSecretValue",
+      },
+    });
+    await claimQueuedLaneRun(stateRoot, {
+      stableWorkItemId: "github-issue-112",
+      laneRunId: "lane-run-112-a",
+      claimedBy: "local-supervisor",
+      claimedAt,
+    });
+
+    const stopResult = await execCli([
+      "stop",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-112",
+      "--lane-run",
+      "lane-run-112-a",
+      "--reason",
+      "operator stops before requeue",
+    ]);
+    assert.equal(stopResult.exitCode, 0);
+
+    const requeueResult = await execCli([
+      "requeue",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-112",
+      "--lane-run",
+      "lane-run-112-a",
+      "--reason",
+      "operator token=ghp_sampleSecretValue requeue",
+    ]);
+    const output = JSON.parse(requeueResult.stdout) as {
+      readonly ok?: unknown;
+      readonly action?: unknown;
+      readonly publicDiagnostics?: { readonly reason?: unknown };
+      readonly lineage?: { readonly relationship?: unknown; readonly previousLaneRunId?: unknown; readonly newQueueRecordId?: unknown };
+    };
+    const serializedOutput = JSON.stringify(output);
+
+    assert.equal(requeueResult.stderr, "");
+    assert.equal(requeueResult.exitCode, 0);
+    assert.equal(output.ok, true);
+    assert.equal(output.action, "requeue");
+    assert.equal(output.publicDiagnostics?.reason, "operator <redacted> requeue");
+    assert.deepEqual(output.lineage, {
+      relationship: "requeued",
+      previousLaneRunId: "lane-run-112-a",
+      newQueueRecordId: "queue-github-issue-112-2",
+      preservedEvidenceRefCount: 0,
+    });
+    assert.equal(serializedOutput.includes(stateRoot), false);
+    assert.equal(serializedOutput.includes("ghp_sampleSecretValue"), false);
+    assert.equal(serializedOutput.includes("queueRecord"), false);
+    assert.equal(serializedOutput.includes("metadata"), false);
+    assert.equal(serializedOutput.includes("privateOperatorNote"), false);
+  });
+});

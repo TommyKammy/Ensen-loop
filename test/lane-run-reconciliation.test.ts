@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   claimQueuedLaneRun,
@@ -23,6 +25,7 @@ import {
 const queuedAt = "2026-05-23T05:00:00.000Z";
 const claimedAt = "2026-05-23T05:01:00.000Z";
 const observedAt = "2026-05-23T05:02:00.000Z";
+const execFileAsync = promisify(execFile);
 
 function laneRunIdDigest(laneRunId: string): string {
   return createHash("sha256").update(laneRunId).digest("hex");
@@ -36,6 +39,31 @@ async function withStateRoot(callback: (stateRoot: string) => Promise<void>): Pr
     await callback(stateRoot);
   } finally {
     await rm(stateRoot, { recursive: true, force: true });
+  }
+}
+
+async function execCli(args: readonly string[]): Promise<{ readonly stdout: string; readonly stderr: string; readonly exitCode: number }> {
+  try {
+    const result = await execFileAsync(process.execPath, ["dist/src/cli/index.js", ...args]);
+
+    return { stdout: result.stdout, stderr: result.stderr, exitCode: 0 };
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      typeof (error as { readonly code?: unknown }).code === "number" &&
+      typeof (error as { readonly stdout?: unknown }).stdout === "string" &&
+      typeof (error as { readonly stderr?: unknown }).stderr === "string"
+    ) {
+      const cliError = error as Error & { readonly code: number; readonly stdout: string; readonly stderr: string };
+
+      return {
+        stdout: cliError.stdout,
+        stderr: cliError.stderr,
+        exitCode: cliError.code,
+      };
+    }
+
+    throw error;
   }
 }
 
@@ -1199,5 +1227,64 @@ test("reconciliation public diagnostics redact workstation paths and secret-look
     assert.equal(serialized.includes(workstationPath), false);
     assert.equal(serialized.includes("ghp_sampleSecretValue"), false);
     assert.equal(result.mismatches[0]?.ref, "<redacted>");
+  });
+});
+
+test("CLI stale-state reconciliation smoke emits public-safe blocked diagnostics", async () => {
+  await withStateRoot(async (stateRoot) => {
+    await queueAndClaim(stateRoot);
+    await writeLaneState(stateRoot, {
+      evidenceRefs: ["artifacts/evidence/lane-run-113-a.json"],
+    });
+    const surfacesPath = path.join(stateRoot, "reconciliation-surfaces.json");
+    const workstationPath = ["", "Users", "example", "private", "repo"].join("/");
+    await writeFile(
+      surfacesPath,
+      `${JSON.stringify(
+        {
+          branch: { expected: true, exists: false, ref: `${workstationPath} token=ghp_sampleSecretValue` },
+          worktree: { expected: true, exists: true, ref: "<lane-worktree>" },
+          journal: { expected: true, exists: true },
+          prDraft: { expected: false, exists: false },
+          verificationFacts: [{ status: "running", source: "operator-status" }],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+
+    const result = await execCli([
+      "reconcile",
+      "--state-root",
+      stateRoot,
+      "--issue",
+      "github-issue-113",
+      "--lane-run",
+      "lane-run-113-a",
+      "--observed-at",
+      observedAt,
+      "--surfaces",
+      surfacesPath,
+    ]);
+    const output = JSON.parse(result.stdout) as {
+      readonly state?: unknown;
+      readonly category?: unknown;
+      readonly publicDiagnostics?: { readonly reason?: unknown };
+      readonly mismatches?: readonly { readonly kind?: unknown; readonly ref?: unknown }[];
+    };
+    const serializedOutput = JSON.stringify(output);
+
+    assert.equal(result.stderr, "");
+    assert.equal(result.exitCode, 1);
+    assert.equal(output.state, "blocked");
+    assert.equal(output.category, "blocked");
+    assert.equal(output.publicDiagnostics?.reason, "active lane run is missing its branch");
+    assert.equal(output.mismatches?.[0]?.kind, "missing-branch");
+    assert.equal(output.mismatches?.[0]?.ref, "<redacted>");
+    assert.equal(serializedOutput.includes(stateRoot), false);
+    assert.equal(serializedOutput.includes(surfacesPath), false);
+    assert.equal(serializedOutput.includes(workstationPath), false);
+    assert.equal(serializedOutput.includes("ghp_sampleSecretValue"), false);
   });
 });

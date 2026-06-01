@@ -70,6 +70,10 @@ node dist/src/cli/index.js x-gate2-smoke <run-request-json-file>
 node dist/src/cli/index.js x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>
 node dist/src/cli/index.js loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>
 node dist/src/cli/index.js loop-mode continuous --state-root <state-root>
+node dist/src/cli/index.js reconcile --state-root <state-root> --issue <stable-work-item-id> [--lane-run <lane-run-id>] --observed-at <iso-timestamp> --surfaces <surfaces-json-file>
+node dist/src/cli/index.js stop --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
+node dist/src/cli/index.js retry --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
+node dist/src/cli/index.js requeue --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
 ```
 
 `npm test` includes the EIP conformance fixture suite. After `npm run build`, `node --test dist/test/eip-conformance-fixtures.test.js` runs only the focused suite for the vendored Ensen-protocol v0.2.0 RunRequest, RunStatusSnapshot, RunResult, and EvidenceBundleRef fixtures. Those fixtures remain `eip.run-request.v1`, `eip.run-status.v1`, `eip.run-result.v1`, and `eip.evidence-bundle-ref.v1`.
@@ -85,6 +89,10 @@ node dist/src/cli/index.js loop-mode continuous --state-root <state-root>
 `x-gate3-smoke <run-request-json-file> --workspace-root <workspace-root> --state-root <state-root>` runs the bounded Phase 3 local fake lane smoke path. It validates the RunRequest, prepares local lane workspace/state directories, invokes the deterministic local fake executor, persists LaneRunState plus local evidence metadata, and emits one aggregate JSON object with RunStatusSnapshot and RunResult projections. It does not create or mutate GitHub issues, branches, pull requests, reviews, commits, real agent-provider sessions, or production evidence archives. Invalid input, unsupported EIP major versions, unsafe roots, failed fake outcomes, and blocked fake outcomes fail closed with parseable JSON output.
 
 `loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>` emits a bounded plan for one operator-selected queued lane run. `loop-mode continuous --state-root <state-root>` emits a supervised repeated-selection plan for the next queued lane run. Both modes report public-safe diagnostics and next operator actions without leaking local paths or credentials. Continuous mode keeps `automaticMerge`, `automaticQualityDecision`, `customerRepoExecution`, and `regulatedDataHandling` false.
+
+`reconcile --state-root <state-root> --issue <stable-work-item-id> [--lane-run <lane-run-id>] --observed-at <iso-timestamp> --surfaces <surfaces-json-file>` reads a public-safe stale-state surfaces payload and emits queue, lock, mismatch, and next-operator diagnostics. Blocked reconciliation exits nonzero without deleting evidence, rewriting history, merging, or making quality decisions.
+
+`stop`, `retry`, and `requeue` are explicit operator recovery actions. They record bounded public reasons, preserve lineage metadata, and emit public diagnostics without printing queue metadata, local workstation paths, or credential-looking values.
 
 EvidenceBundleRef validation is exposed as an Ensen-loop-native protocol helper for copied Ensen-protocol v0.2.0 fixtures and dry-run metadata. It accepts relative traversal-free local paths and absolute `file:///` URIs, rejects credential-shaped URIs, query or fragment-bearing file URIs, traversal, absolute local paths, and ambiguous local path shapes, and keeps validation independent from any Ensen-flow runtime.
 
