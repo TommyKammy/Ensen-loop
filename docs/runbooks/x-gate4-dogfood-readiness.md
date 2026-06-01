@@ -78,6 +78,10 @@ node dist/src/cli/index.js status --state-root <state-root>
 node dist/src/cli/index.js explain --state-root <state-root> --issue <stable-work-item-id>
 node dist/src/cli/index.js loop-mode one-shot --state-root <state-root> --issue <stable-work-item-id>
 node dist/src/cli/index.js loop-mode continuous --state-root <state-root>
+node dist/src/cli/index.js reconcile --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --observed-at <iso-timestamp> --surfaces <surfaces-json-file>
+node dist/src/cli/index.js stop --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
+node dist/src/cli/index.js retry --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
+node dist/src/cli/index.js requeue --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>
 ```
 
 ## LOOP-X4-004 Status And Explain Evidence
@@ -103,6 +107,29 @@ surface is:
 Public diagnostics must redact credentials, workstation-local paths, customer
 identifiers, private repository details, and regulated-looking values before
 they reach status or explain output.
+
+## LOOP-X4-005 Recovery Smoke Evidence
+
+The recovery smoke boundary is the focused `lane-run-operator-actions` and
+`lane-run-reconciliation` test suites plus the CLI command examples above. It
+covers operator stop, retry, requeue, stale lock detection, missing branch,
+missing worktree, missing journal, missing PR draft reference, and conflicting
+verification facts.
+
+Expected recovery behavior:
+
+| Recovery path | Operator surface |
+| --- | --- |
+| Stop active lane | Records revoked lineage and a bounded public reason. |
+| Retry terminal lane | Creates a new queued attempt linked to the prior lane run and preserves evidence counts. |
+| Requeue revoked or superseded lane | Returns the selected issue to the queue with explicit lineage. |
+| Safe stale state | Blocks with explicit cleanup or requeue guidance. |
+| Ambiguous or conflicting state | Fails closed with manual-review or blocked diagnostics. |
+
+Recovery diagnostics must not expose raw local paths, credentials, customer
+data, private repository details, queue metadata, or durable evidence contents.
+Recovery commands must not delete evidence, rewrite history, create an
+automatic merge, or make an automatic quality decision.
 
 ## Stop Criteria
 

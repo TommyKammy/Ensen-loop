@@ -18,11 +18,13 @@ import {
   getLaneRunStatus,
   planLoopMode,
   prepareLocalLaneWorkspace,
+  reconcileLaneRunState,
   requeueLaneRun,
   retryLaneRun,
   stopLaneRun,
 } from "../lane/index.js";
-import type { LaneRunOperatorActionResult } from "../lane/index.js";
+import type { ReconcileLaneRunStateInput } from "../lane/index.js";
+import type { LaneRunOperatorActionResult, LaneRunReconciliationResult } from "../lane/index.js";
 import {
   createBlockedRunResultFromValidationIssues,
   createBlockedRunStatusSnapshotFromValidationIssues,
@@ -59,6 +61,26 @@ function projectLaneRunOperatorActionCliResult(result: LaneRunOperatorActionResu
       newQueueRecordId: result.lineage.newQueueRecordId,
       preservedEvidenceRefCount: result.lineage.preservedEvidenceRefs.length,
     },
+  };
+}
+
+function projectLaneRunReconciliationCliResult(result: LaneRunReconciliationResult): unknown {
+  return {
+    schemaVersion: result.schemaVersion,
+    state: result.state,
+    category: result.category,
+    stableWorkItemId: result.stableWorkItemId,
+    laneRunId: result.laneRunId,
+    observedAt: result.observedAt,
+    publicDiagnostics: result.publicDiagnostics,
+    nextOperatorAction: result.nextOperatorAction,
+    mismatches: result.mismatches,
+    evidence: {
+      bundleRefCount: result.evidence.bundleRefs.length,
+    },
+    queue: result.queue,
+    lock: result.lock,
+    startsAgentExecution: result.startsAgentExecution,
   };
 }
 
@@ -321,6 +343,28 @@ async function main(): Promise<number> {
     return plan.state === "ready" ? 0 : 1;
   }
 
+  if (command === "reconcile") {
+    const options = parseReconcileArgs(args);
+
+    if (options === undefined) {
+      console.error(
+        "Usage: ensen-loop reconcile --state-root <state-root> --issue <stable-work-item-id> [--lane-run <lane-run-id>] --observed-at <iso-timestamp> --surfaces <surfaces-json-file>",
+      );
+      return 1;
+    }
+
+    const surfaces = await readJsonFile(options.surfacesPath);
+    const result = await reconcileLaneRunState(options.stateRoot, {
+      stableWorkItemId: options.stableWorkItemId,
+      laneRunId: options.laneRunId,
+      observedAt: options.observedAt,
+      surfaces,
+    } as ReconcileLaneRunStateInput);
+
+    printJson(projectLaneRunReconciliationCliResult(result));
+    return result.state === "ok" ? 0 : 1;
+  }
+
   if (command === "stop" || command === "retry" || command === "requeue") {
     const options = parseOperatorActionArgs(args);
 
@@ -379,6 +423,9 @@ async function main(): Promise<number> {
   );
   console.error("Usage: ensen-loop loop-mode continuous --state-root <state-root>");
   console.error("X-Gate 4 dogfood is owner-controlled only and does not authorize customer repo execution.");
+  console.error(
+    "Usage: ensen-loop reconcile --state-root <state-root> --issue <stable-work-item-id> [--lane-run <lane-run-id>] --observed-at <iso-timestamp> --surfaces <surfaces-json-file>",
+  );
   console.error(
     "Usage: ensen-loop stop|retry|requeue --state-root <state-root> --issue <stable-work-item-id> --lane-run <lane-run-id> --reason <public-reason>",
   );
@@ -595,6 +642,57 @@ interface OperatorActionOptions {
   readonly stableWorkItemId: string;
   readonly laneRunId: string;
   readonly reason: string;
+}
+
+interface ReconcileOptions {
+  readonly stateRoot: string;
+  readonly stableWorkItemId: string;
+  readonly laneRunId?: string;
+  readonly observedAt: string;
+  readonly surfacesPath: string;
+}
+
+function parseReconcileArgs(args: readonly string[]): ReconcileOptions | undefined {
+  if (args.length !== 8 && args.length !== 10) {
+    return undefined;
+  }
+
+  const values = new Map<string, string>();
+
+  for (let index = 0; index < args.length; index += 2) {
+    const flag = args[index];
+    const value = args[index + 1];
+
+    if (flag === undefined || value === undefined || !flag.startsWith("--")) {
+      return undefined;
+    }
+
+    values.set(flag, value);
+  }
+
+  const stateRoot = values.get("--state-root");
+  const stableWorkItemId = values.get("--issue");
+  const laneRunId = values.get("--lane-run");
+  const observedAt = values.get("--observed-at");
+  const surfacesPath = values.get("--surfaces");
+
+  if (
+    stateRoot === undefined ||
+    stableWorkItemId === undefined ||
+    observedAt === undefined ||
+    surfacesPath === undefined ||
+    values.size !== (laneRunId === undefined ? 4 : 5)
+  ) {
+    return undefined;
+  }
+
+  return {
+    stateRoot,
+    stableWorkItemId,
+    laneRunId,
+    observedAt,
+    surfacesPath,
+  };
 }
 
 function parseOperatorActionArgs(args: readonly string[]): OperatorActionOptions | undefined {
