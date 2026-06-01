@@ -18,6 +18,8 @@ The X-Gate 3 local fake lane smoke command is documented in [docs/runbooks/x-gat
 
 The X-Gate 4 owner-controlled dogfood readiness checklist is documented in [docs/runbooks/x-gate4-dogfood-readiness.md](docs/runbooks/x-gate4-dogfood-readiness.md). It defines the public-safe owner-only scope, Phase 6 baseline, and stop criteria for later dogfood child issues without relying on Ensen-flow runtime state.
 
+The X-Gate 4 readiness report and Phase 7 handoff decision are documented in [docs/runbooks/x-gate4-readiness-report.md](docs/runbooks/x-gate4-readiness-report.md). The decision is go for owner-controlled codex-supervisor parity automation only; customer repositories, regulated data, automatic merge, automatic quality decisions, production readiness, and compliance claims remain out of scope.
+
 The Ensen-loop mission and development charter alignment are summarized in [docs/mission.md](docs/mission.md).
 
 The Phase 1 local Work Item validation skeleton is documented in [docs/reference/work-item-contract.md](docs/reference/work-item-contract.md).
