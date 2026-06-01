@@ -24,7 +24,7 @@ import {
   stopLaneRun,
 } from "../lane/index.js";
 import type { ReconcileLaneRunStateInput } from "../lane/index.js";
-import type { LaneRunOperatorActionResult } from "../lane/index.js";
+import type { LaneRunOperatorActionResult, LaneRunReconciliationResult } from "../lane/index.js";
 import {
   createBlockedRunResultFromValidationIssues,
   createBlockedRunStatusSnapshotFromValidationIssues,
@@ -61,6 +61,26 @@ function projectLaneRunOperatorActionCliResult(result: LaneRunOperatorActionResu
       newQueueRecordId: result.lineage.newQueueRecordId,
       preservedEvidenceRefCount: result.lineage.preservedEvidenceRefs.length,
     },
+  };
+}
+
+function projectLaneRunReconciliationCliResult(result: LaneRunReconciliationResult): unknown {
+  return {
+    schemaVersion: result.schemaVersion,
+    state: result.state,
+    category: result.category,
+    stableWorkItemId: result.stableWorkItemId,
+    laneRunId: result.laneRunId,
+    observedAt: result.observedAt,
+    publicDiagnostics: result.publicDiagnostics,
+    nextOperatorAction: result.nextOperatorAction,
+    mismatches: result.mismatches,
+    evidence: {
+      bundleRefCount: result.evidence.bundleRefs.length,
+    },
+    queue: result.queue,
+    lock: result.lock,
+    startsAgentExecution: result.startsAgentExecution,
   };
 }
 
@@ -341,7 +361,7 @@ async function main(): Promise<number> {
       surfaces,
     } as ReconcileLaneRunStateInput);
 
-    printJson(result);
+    printJson(projectLaneRunReconciliationCliResult(result));
     return result.state === "ok" ? 0 : 1;
   }
 

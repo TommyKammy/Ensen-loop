@@ -1233,8 +1233,9 @@ test("reconciliation public diagnostics redact workstation paths and secret-look
 test("CLI stale-state reconciliation smoke emits public-safe blocked diagnostics", async () => {
   await withStateRoot(async (stateRoot) => {
     await queueAndClaim(stateRoot);
+    const privateEvidencePath = ["", "Users", "example", "private", "evidence.json"].join("/");
     await writeLaneState(stateRoot, {
-      evidenceRefs: ["artifacts/evidence/lane-run-113-a.json"],
+      evidenceRefs: [`${privateEvidencePath}?token=ghp_sampleEvidenceSecret`],
     });
     const surfacesPath = path.join(stateRoot, "reconciliation-surfaces.json");
     const workstationPath = ["", "Users", "example", "private", "repo"].join("/");
@@ -1272,6 +1273,7 @@ test("CLI stale-state reconciliation smoke emits public-safe blocked diagnostics
       readonly category?: unknown;
       readonly publicDiagnostics?: { readonly reason?: unknown };
       readonly mismatches?: readonly { readonly kind?: unknown; readonly ref?: unknown }[];
+      readonly evidence?: { readonly bundleRefCount?: unknown };
     };
     const serializedOutput = JSON.stringify(output);
 
@@ -1282,9 +1284,13 @@ test("CLI stale-state reconciliation smoke emits public-safe blocked diagnostics
     assert.equal(output.publicDiagnostics?.reason, "active lane run is missing its branch");
     assert.equal(output.mismatches?.[0]?.kind, "missing-branch");
     assert.equal(output.mismatches?.[0]?.ref, "<redacted>");
+    assert.equal(output.evidence?.bundleRefCount, 1);
     assert.equal(serializedOutput.includes(stateRoot), false);
     assert.equal(serializedOutput.includes(surfacesPath), false);
     assert.equal(serializedOutput.includes(workstationPath), false);
     assert.equal(serializedOutput.includes("ghp_sampleSecretValue"), false);
+    assert.equal(serializedOutput.includes(privateEvidencePath), false);
+    assert.equal(serializedOutput.includes("ghp_sampleEvidenceSecret"), false);
+    assert.equal(serializedOutput.includes("bundleRefs"), false);
   });
 });
