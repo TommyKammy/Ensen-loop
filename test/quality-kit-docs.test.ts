@@ -316,3 +316,45 @@ test("documents the X-Gate 4 owner-controlled dogfood readiness checklist", asyn
     /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
   );
 });
+
+test("documents the X-Gate 4 readiness report and Phase 7 handoff decision", async () => {
+  const report = await readMarkdown("docs/runbooks/x-gate4-readiness-report.md");
+  const readme = await readMarkdown("README.md");
+
+  for (const phrase of [
+    "X-Gate 4 Readiness Report",
+    "Decision: go",
+    "Phase 7 codex-supervisor parity automation",
+    "#122",
+    "#123",
+    "#124",
+    "#125",
+    "#126",
+    "#127",
+    "owner-controlled only",
+    "customer repositories",
+    "regulated data",
+    "automatic merge",
+    "automatic quality decision",
+    "production readiness",
+    "compliance claims",
+    "npm ci",
+    "npm run typecheck",
+    "npm run build",
+    "npm test",
+    "node --test dist/test/lane-loop-mode.test.js",
+    "node --test dist/test/lane-run-status-explain.test.js",
+    "node --test dist/test/lane-run-operator-actions.test.js",
+    "node --test dist/test/lane-run-reconciliation.test.js",
+    "standalone Node/TypeScript project",
+    "does not import Ensen-flow implementation code",
+  ]) {
+    assert.match(report, new RegExp(phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i"));
+  }
+
+  assert.match(readme, /docs\/runbooks\/x-gate4-readiness-report\.md/);
+  assert.doesNotMatch(
+    report,
+    /\/Users\/[^/\s]+|\/home\/[^/\s]+|\/root(?:\/|\b)|[A-Z]:[\\/]+Users[\\/]|~[\\/]/i,
+  );
+});
